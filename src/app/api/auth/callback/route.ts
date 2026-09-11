@@ -1,47 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerClient } from "@supabase/ssr";
+import { getSafeRedirectPath } from "@/lib/auth/redirect";
 import { cookies } from "next/headers";
 
 export async function GET(request: NextRequest) {
-  const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
-  const next = requestUrl.searchParams.get("next");
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const next = url.searchParams.get("next") ?? "/account";
+  const origin = url.origin;
 
   if (!code) {
-    return NextResponse.redirect(`${requestUrl.origin}/sign-in?error=Authorization code not found`);
+    const redirectUrl = new URL("/sign-in", origin);
+    redirectUrl.searchParams.set("error", "Authorization code not found");
+    return NextResponse.redirect(redirectUrl.toString());
   }
 
+  // Build the redirect response early so Supabase can attach session cookies to it.
+  const redirectPath = getSafeRedirectPath(next, origin);
+  const response = NextResponse.redirect(new URL(redirectPath, origin));
   const cookieStore = cookies();
-  const supabase = createSupabaseServerClient({
-    getAll: () => cookieStore.getAll(),
-    setAll: (cookiesToSet) => {
-      try {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          cookieStore.set(name, value, options);
-        });
-      } catch {
-        // Cookie writes are handled by middleware when the runtime makes cookies read-only.
-      }
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) =>
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          ),
+      },
     },
-  });
+  );
 
   if (!supabase) {
-    return NextResponse.redirect(`${requestUrl.origin}/sign-in?error=Authentication service not configured`);
+    const redirectUrl = new URL("/sign-in", origin);
+    redirectUrl.searchParams.set("error", "Authentication service not configured");
+    return NextResponse.redirect(redirectUrl.toString());
   }
 
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     console.error("Exchange code error:", error);
-    return NextResponse.redirect(`${requestUrl.origin}/sign-in?error=${encodeURIComponent(error.message)}`);
+    const redirectUrl = new URL("/sign-in", origin);
+    redirectUrl.searchParams.set("error", error.message);
+    return NextResponse.redirect(redirectUrl.toString());
   }
-
-  const redirectUrl = new URL(next || "/account", requestUrl.origin);
-  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-
-  redirectUrl.host = forwardedHost || redirectUrl.host;
-
-  const response = NextResponse.redirect(redirectUrl.toString());
 
   return response;
 }

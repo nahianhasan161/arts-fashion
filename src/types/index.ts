@@ -1,3 +1,16 @@
+export type UserRole = "admin" | "user";
+
+export interface Profile {
+  id: string;
+  full_name: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  avatar_url: string | null;
+  role: UserRole;
+  updated_at: string;
+}
+
 export interface ProductColor {
   name: string;
   hex: string;
@@ -29,6 +42,7 @@ export interface Product {
   badge_type?: "discount" | "new" | "festive" | "popular";
   is_featured?: boolean;
   specs?: Record<string, string>;
+  created_at?: string;
 }
 
 export interface CartItem {

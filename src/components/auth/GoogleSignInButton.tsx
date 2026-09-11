@@ -28,7 +28,8 @@ export function GoogleSignInButton({
     onPending?.(true);
 
     try {
-      const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(returnTo)}`;
+      const origin = window.location.origin;
+      const callbackUrl = `${origin}/api/auth/callback?next=${encodeURIComponent(returnTo)}`;
       const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {

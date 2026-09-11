@@ -1,5 +1,4 @@
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import type { CookieOptions } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
@@ -32,6 +31,8 @@ export function createSupabaseServerClient(cookieStore: CookieStore): SupabaseCl
 }
 
 export async function getSupabaseServerClient(): Promise<SupabaseClient | null> {
+  // Dynamically import cookies() to avoid bundling next/headers in client components
+  const { cookies } = await import("next/headers");
   const cookieStore = cookies();
 
   return createSupabaseServerClient({

@@ -15,7 +15,8 @@ import {
   X,
   Home,
   LayoutGrid,
-  MessageCircle
+  MessageCircle,
+  Shield,
 } from "lucide-react";
 import { useCartStore } from "@/lib/store/cart-store";
 import { useWishlistStore } from "@/lib/store/wishlist-store";
@@ -30,7 +31,7 @@ export function Header() {
 
   const { toggleCart, getTotalCount, getSubtotal } = useCartStore();
   const { getCount: getWishlistCount, toggleWishlistDrawer } = useWishlistStore();
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, signOut } = useAuth();
 
   useEffect(() => {
     setMounted(true);
@@ -187,35 +188,68 @@ export function Header() {
             >
               <User className="w-6 h-6" />
             </Link>
-          ) : (
+           ) : (
             <div className="relative" data-user-menu="true">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="p-2 rounded-lg hover:bg-surface-subtle text-on-surface-variant hover:text-primary transition-colors"
+                className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-surface-subtle text-on-surface-variant hover:text-primary transition-colors"
                 aria-label="Account menu"
               >
-                <User className="w-6 h-6" />
-                {userMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-border-light">
+                {user?.user_metadata?.picture ||
+                user?.user_metadata?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      user?.user_metadata?.picture ||
+                      user?.user_metadata?.avatar_url || ""
+                    }
+                    alt={user?.user_metadata?.full_name || "User"}
+                    className="w-8 h-8 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <User className="w-5 h-5 text-primary" />
+                  </div>
+                )}
+                <span className="hidden sm:block text-sm font-medium text-on-surface truncate max-w-[140px]">
+                  {user?.user_metadata?.full_name ||
+                    user?.user_metadata?.name ||
+                    user?.email?.split("@")[0] ||
+                    "Account"}
+                </span>
+              </button>
+              {userMenuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-border-light">
+                  <Link
+                    href="/account"
+                    className="block px-4 py-2 text-sm text-on-surface hover:bg-surface-subtle transition-colors"
+                    onClick={() => setUserMenuOpen(false)}
+                  >
+                    My Account
+                  </Link>
+                  {isAdmin && (
                     <Link
-                      href="/account"
+                      href="/admin"
                       className="block px-4 py-2 text-sm text-on-surface hover:bg-surface-subtle transition-colors"
                       onClick={() => setUserMenuOpen(false)}
                     >
-                      My Account
+                      <span className="flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-accent-gold" />
+                        Admin Panel
+                      </span>
                     </Link>
-                    <button
-                      onClick={() => {
-                        signOut();
-                        setUserMenuOpen(false);
-                      }}
-                      className="block w-full text-left px-4 py-2 text-sm text-on-surface hover:bg-surface-subtle transition-colors"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                )}
-              </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      signOut();
+                      setUserMenuOpen(false);
+                    }}
+                    className="block w-full text-left px-4 py-2 text-sm text-on-surface hover:bg-surface-subtle transition-colors"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -357,10 +391,25 @@ export function Header() {
               <div className="relative flex-1 flex flex-col items-center justify-center">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="relative w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white"
+                  className="relative w-8 h-8 rounded-full flex items-center justify-center overflow-hidden"
                   aria-label="Account menu"
                 >
-                  <User className="w-4 h-4" />
+                  {                  user?.user_metadata?.picture ||
+                  user?.user_metadata?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={
+                        user?.user_metadata?.picture ||
+                        user?.user_metadata?.avatar_url || ""
+                      }
+                      alt={user?.user_metadata?.full_name || "User"}
+                      className="w-8 h-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User className="w-4 h-4 text-primary" />
+                    </div>
+                  )}
                 </button>
                 {userMenuOpen && (
                   <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-border-light">
@@ -371,6 +420,18 @@ export function Header() {
                     >
                       My Account
                     </Link>
+                    {isAdmin && (
+                      <Link
+                        href="/admin"
+                        className="block px-4 py-2 text-sm text-on-surface hover:bg-surface-subtle transition-colors"
+                        onClick={() => setUserMenuOpen(false)}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-accent-gold" />
+                          Admin Panel
+                        </span>
+                      </Link>
+                    )}
                     <button
                       onClick={() => {
                         signOut();

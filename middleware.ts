@@ -26,15 +26,32 @@ export async function middleware(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    if (
-      !user &&
-      (request.nextUrl.pathname === "/account" ||
-        request.nextUrl.pathname.startsWith("/account/"))
-    ) {
+    const isProtectedRoute =
+      request.nextUrl.pathname === "/account" ||
+      request.nextUrl.pathname.startsWith("/account/") ||
+      request.nextUrl.pathname === "/admin" ||
+      request.nextUrl.pathname.startsWith("/admin/");
+
+    if (!user && isProtectedRoute) {
       const url = request.nextUrl.clone();
       url.pathname = "/sign-in";
       url.searchParams.set("next", request.nextUrl.pathname);
       return NextResponse.redirect(url);
+    }
+
+    const isAdminRoute =
+      request.nextUrl.pathname === "/admin" ||
+      request.nextUrl.pathname.startsWith("/admin/");
+
+    if (user && isAdminRoute) {
+      const { data: isAdminResult, error: adminCheckError } =
+        await supabase.rpc("is_admin");
+
+      if (adminCheckError || !isAdminResult) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/";
+        return NextResponse.redirect(url);
+      }
     }
   }
 

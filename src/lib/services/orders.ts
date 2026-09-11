@@ -1,5 +1,19 @@
 import { CartItem, OrderCustomerInfo } from "@/types";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+async function getActiveSupabaseClient(): Promise<SupabaseClient | null> {
+  if (typeof window === "undefined") {
+    // Dynamically import to avoid bundling next/headers in client components
+    try {
+      const { getSupabaseServerClient } = await import("@/lib/supabase/server");
+      return await getSupabaseServerClient();
+    } catch {
+      return null;
+    }
+  }
+  return getSupabaseBrowserClient();
+}
 
 export async function createOrder(
   customer: OrderCustomerInfo,
@@ -11,7 +25,8 @@ export async function createOrder(
   const orderId = "ORD-" + Math.floor(100000 + Math.random() * 900000);
   const totalAmount = subtotal + shippingFee;
 
-  if (isSupabaseConfigured && supabase) {
+  const supabase = await getActiveSupabaseClient();
+  if (supabase) {
     try {
       const { error: orderError } = await supabase
         .from("orders")

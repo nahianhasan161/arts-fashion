@@ -1,5 +1,6 @@
 -- ==========================================================
--- ARTS FASHION E-COMMERCE DATABASE SCHEMA (SUPABASE / POSTGRESQL)
+-- MIGRATION: Full Arts Fashion Schema with Admin RBAC
+-- Idempotent - safe to run on existing databases
 -- ==========================================================
 
 -- 1. Enable UUID Extension
@@ -51,6 +52,17 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 4a. Add role column if profiles exists without it (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'role'
+    ) THEN
+        ALTER TABLE public.profiles ADD COLUMN role TEXT DEFAULT 'user' NOT NULL CHECK (role IN ('user', 'admin'));
+    END IF;
+END $$;
+
 -- Helper function: Check if the current authenticated user is an admin
 CREATE OR REPLACE FUNCTION public.is_admin()
 RETURNS boolean
@@ -66,6 +78,7 @@ BEGIN
 END;
 $$;
 
+-- Handle new user trigger function
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -85,6 +98,7 @@ BEGIN
 END;
 $$;
 
+-- Trigger for new auth users
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
@@ -124,51 +138,62 @@ CREATE TABLE IF NOT EXISTS public.order_items (
 -- ROW LEVEL SECURITY (RLS)
 -- ==========================================================
 
-ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.order_items ENABLE ROW LEVEL SECURITY;
 
 -- ---- Categories ----
--- Public can view categories
+DROP POLICY IF EXISTS "Allow public read access to categories" ON public.categories;
 CREATE POLICY "Allow public read access to categories" ON public.categories FOR SELECT USING (true);
--- Admins can manage categories
+DROP POLICY IF EXISTS "Admins can insert categories" ON public.categories;
 CREATE POLICY "Admins can insert categories" ON public.categories FOR INSERT WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "Admins can update categories" ON public.categories;
 CREATE POLICY "Admins can update categories" ON public.categories FOR UPDATE USING (public.is_admin());
+DROP POLICY IF EXISTS "Admins can delete categories" ON public.categories;
 CREATE POLICY "Admins can delete categories" ON public.categories FOR DELETE USING (public.is_admin());
 
 -- ---- Products ----
--- Public can view products
+DROP POLICY IF EXISTS "Allow public read access to products" ON public.products;
 CREATE POLICY "Allow public read access to products" ON public.products FOR SELECT USING (true);
--- Admins can manage products
+DROP POLICY IF EXISTS "Admins can insert products" ON public.products;
 CREATE POLICY "Admins can insert products" ON public.products FOR INSERT WITH CHECK (public.is_admin());
+DROP POLICY IF EXISTS "Admins can update products" ON public.products;
 CREATE POLICY "Admins can update products" ON public.products FOR UPDATE USING (public.is_admin());
+DROP POLICY IF EXISTS "Admins can delete products" ON public.products;
 CREATE POLICY "Admins can delete products" ON public.products FOR DELETE USING (public.is_admin());
 
 -- ---- Profiles ----
--- Users can manage their own profile
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
 CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
 DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
 CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
--- Admins can view all profiles
+DROP POLICY IF EXISTS "Admins can view all profiles" ON public.profiles;
 CREATE POLICY "Admins can view all profiles" ON public.profiles FOR SELECT USING (public.is_admin());
--- Admins can update any profile (e.g. role changes)
+DROP POLICY IF EXISTS "Admins can update all profiles" ON public.profiles;
 CREATE POLICY "Admins can update all profiles" ON public.profiles FOR UPDATE USING (public.is_admin());
 
 -- ---- Orders ----
--- Anyone can insert orders (guest or auth)
+DROP POLICY IF EXISTS "Anyone can create orders" ON public.orders;
 CREATE POLICY "Anyone can create orders" ON public.orders FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can view own orders" ON public.orders;
 CREATE POLICY "Users can view own orders" ON public.orders FOR SELECT USING (auth.uid() = user_id OR auth.uid() IS NULL);
--- Admins can view and update all orders
+DROP POLICY IF EXISTS "Admins can view all orders" ON public.orders;
 CREATE POLICY "Admins can view all orders" ON public.orders FOR SELECT USING (public.is_admin());
+DROP POLICY IF EXISTS "Admins can update all orders" ON public.orders;
 CREATE POLICY "Admins can update all orders" ON public.orders FOR UPDATE USING (public.is_admin());
+DROP POLICY IF EXISTS "Admins can delete orders" ON public.orders;
 CREATE POLICY "Admins can delete orders" ON public.orders FOR DELETE USING (public.is_admin());
 
 -- ---- Order Items ----
+DROP POLICY IF EXISTS "Anyone can create order items" ON public.order_items;
 CREATE POLICY "Anyone can create order items" ON public.order_items FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can view order items" ON public.order_items;
 CREATE POLICY "Users can view order items" ON public.order_items FOR SELECT USING (true);
--- Admins can manage order items
+DROP POLICY IF EXISTS "Admins can update order items" ON public.order_items;
 CREATE POLICY "Admins can update order items" ON public.order_items FOR UPDATE USING (public.is_admin());
+DROP POLICY IF EXISTS "Admins can delete order items" ON public.order_items;
 CREATE POLICY "Admins can delete order items" ON public.order_items FOR DELETE USING (public.is_admin());

@@ -71,7 +71,7 @@ export default function SignUpPage() {
           data: {
             full_name: form.name,
           },
-          emailRedirectTo: `${origin || ''}/auth/callback?next=${encodeURIComponent(returnTo || '')}`,
+          emailRedirectTo: `${origin || ''}/api/auth/callback?next=${encodeURIComponent(returnTo || '')}`,
         },
       });
 

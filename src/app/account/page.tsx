@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { ArrowRight, User, Mail, Phone, MapPin, Edit, Save } from "lucide-react";
+import { ArrowRight, User, Mail, Phone, MapPin, Edit, Save, Shield } from "lucide-react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 const AccountPage = () => {
-  const { user, signOut } = useAuth();
+  const { user, isAdmin, signOut } = useAuth();
 
   const [profile, setProfile] = useState({
     full_name: user?.user_metadata?.full_name || "",
@@ -79,15 +79,35 @@ const AccountPage = () => {
       <div className="flex flex-col lg:flex-row gap-space-xl">
         <div className="lg:w-1/3">
           <div className="bg-surface-card border border-border-light rounded-xl p-space-lg shadow-sm">
-            <div className="flex flex-col items-center text-center">
-              <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-space-base">
-                <User className="w-10 h-10 text-primary" />
-              </div>
+             <div className="flex flex-col items-center text-center">
+                {user?.user_metadata?.picture ||
+                user?.user_metadata?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      user?.user_metadata?.picture ||
+                      user?.user_metadata?.avatar_url || ""
+                    }
+                    alt={user?.user_metadata?.full_name || "User"}
+                    className="w-20 h-20 rounded-full object-cover mb-space-base"
+                  />
+               ) : (
+                 <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-space-base">
+                   <User className="w-10 h-10 text-primary" />
+                 </div>
+               )}
 
               <h1 className="font-display text-xl uppercase tracking-wider font-bold text-primary mb-1">
-                {user?.email || "Guest"}
+                {user?.user_metadata?.full_name ||
+                  user?.user_metadata?.name ||
+                  user?.email || "Guest"}
               </h1>
-              <p className="text-xs text-text-muted mb-space-lg">Account Member</p>
+              {isAdmin && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-accent-gold/10 text-accent-gold rounded-full text-xs font-medium">
+                  <Shield className="w-3 h-3" />
+                  Admin
+                </span>
+              )}
 
               {emailVerified && user?.email && !checkingEmail && (
                 <div className="w-full bg-green-50 border border-green-200 rounded-lg p-2 mb-space-lg">

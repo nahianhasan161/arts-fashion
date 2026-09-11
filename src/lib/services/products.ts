@@ -1,6 +1,20 @@
 import { Product, Category } from "@/types";
 import { PRODUCTS, CATEGORIES } from "@/lib/data/mock-data";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+async function getActiveSupabaseClient(): Promise<SupabaseClient | null> {
+  if (typeof window === "undefined") {
+    // Dynamically import to avoid bundling next/headers in client components
+    try {
+      const { getSupabaseServerClient } = await import("@/lib/supabase/server");
+      return await getSupabaseServerClient();
+    } catch {
+      return null;
+    }
+  }
+  return getSupabaseBrowserClient();
+}
 
 export async function getProducts(options?: {
   category?: string;
@@ -12,7 +26,8 @@ export async function getProducts(options?: {
   limit?: number;
 }): Promise<Product[]> {
   // If Supabase is configured and reachable
-  if (isSupabaseConfigured && supabase) {
+  const supabase = await getActiveSupabaseClient();
+  if (supabase) {
     try {
       let query = supabase.from("products").select("*");
 
@@ -97,7 +112,8 @@ export async function getProducts(options?: {
 }
 
 export async function getProductBySlug(slug: string): Promise<Product | null> {
-  if (isSupabaseConfigured && supabase) {
+  const supabase = await getActiveSupabaseClient();
+  if (supabase) {
     try {
       const { data, error } = await supabase
         .from("products")
