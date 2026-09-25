@@ -1,10 +1,16 @@
 "use client";
 
-import React, { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import { Mail, LockKeyhole, Eye, EyeOff, User } from "lucide-react";
+import { useState, FormEvent, useEffect } from "react";
+import { Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { useRouter } from "next/navigation";
 import { getSafeRedirectPath } from "@/lib/auth/redirect";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -30,12 +36,10 @@ export default function SignUpPage() {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [origin, setOrigin] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const searchParams = new URLSearchParams(window.location.search);
-      setReturnTo(getSafeRedirectPath(searchParams.get("next") || null));
-      setOrigin(window.location.origin);
-    }
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    setReturnTo(getSafeRedirectPath(searchParams.get("next") || null));
+    setOrigin(window.location.origin);
   }, []);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -107,107 +111,106 @@ export default function SignUpPage() {
         <p className="text-xs text-text-muted">Start your Arts Fashion journey</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-space-base">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-space-base">
         {error && (
-          <div className="bg-badge-discount/10 border border-badge-discount/30 rounded-lg p-space-base">
-            <p className="text-[11px] font-medium text-badge-discount">{error}</p>
-          </div>
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
-        <div className="space-y-1.5">
-          <label className="block text-xs font-semibold text-on-surface">Full Name</label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sign-up-name">Full Name</Label>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none">
+              <span className="block w-4 h-4">👤</span>
+            </div>
+            <Input
+              id="sign-up-name"
               type="text"
               required
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Your full name"
-              className="w-full h-10 pl-9 pr-3 border border-border-light rounded-lg text-xs font-medium focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
             />
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="block text-xs font-semibold text-on-surface">Email Address</label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sign-up-email">Email Address</Label>
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-4 h-4 pointer-events-none" />
+            <Input
+              id="sign-up-email"
               type="email"
               required
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               placeholder="your.email@example.com"
-              className="w-full h-10 pl-9 pr-3 border border-border-light rounded-lg text-xs font-medium focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
             />
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="block text-xs font-semibold text-on-surface">Password</label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sign-up-password">Password</Label>
           <div className="relative">
-            <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-4 h-4 pointer-events-none" />
+            <Input
+              id="sign-up-password"
               type={showPassword ? "text" : "password"}
               required
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               placeholder="Create a password"
-              className="w-full h-10 pl-9 pr-10 border border-border-light rounded-lg text-xs font-medium focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-primary transition-colors"
             >
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showPassword ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
             </button>
           </div>
-          <p className="text-[10px] text-text-muted">Minimum 8 characters</p>
+          <Badge variant="secondary">Minimum 8 characters</Badge>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="block text-xs font-semibold text-on-surface">Confirm Password</label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sign-up-confirm-password">Confirm Password</Label>
           <div className="relative">
-            <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-4 h-4 pointer-events-none" />
+            <Input
+              id="sign-up-confirm-password"
               type={showConfirmPassword ? "text" : "password"}
               required
               value={form.confirmPassword}
               onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
               placeholder="Confirm your password"
-              className="w-full h-10 pl-9 pr-10 border border-border-light rounded-lg text-xs font-medium focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/20 transition-colors"
             />
             <button
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-primary transition-colors"
             >
-              {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showConfirmPassword ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
             </button>
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full h-11 bg-primary hover:bg-primary-container text-white font-display uppercase tracking-wider text-xs font-bold rounded-lg transition-colors active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+        <Button type="submit" disabled={loading} className="w-full h-11">
           {loading ? "Creating Account..." : "Create Account"}
-        </button>
+        </Button>
+
+        <Separator className="w-full" />
+
+        <GoogleSignInButton returnTo={returnTo ?? undefined} />
       </form>
-
-      <div className="relative my-space-base">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-border-light" />
-        </div>
-        <div className="relative flex justify-center text-xs uppercase text-text-muted">
-          <span className="bg-surface-card px-3">Or continue with</span>
-        </div>
-      </div>
-
-      <GoogleSignInButton returnTo={returnTo ?? undefined} />
     </AuthLayout>
   );
 }

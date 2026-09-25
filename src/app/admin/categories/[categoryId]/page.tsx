@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { Plus, Edit, Trash2, X, ChevronDown, ChevronRight } from "lucide-react";
+import { useRouter, useParams } from "next/navigation";
+import { Plus, Edit, Trash2, X, ChevronLeft } from "lucide-react";
 import { slugify } from "@/lib/utils";
 import type { Category } from "@/types";
 
@@ -12,8 +12,11 @@ interface ApiResponse<T> {
   error?: string;
 }
 
-export default function AdminCategories() {
+export default function AdminSubcategories() {
   const router = useRouter();
+  const params = useParams<{ categoryId: string }>();
+  const parentId = params.categoryId;
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -21,46 +24,48 @@ export default function AdminCategories() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [parentCategory, setParentCategory] = useState<Category | null>(null);
 
-  const fetchCategories = useCallback(async () => {
+  const fetchParentCategory = useCallback(async () => {
+    if (!parentId) return;
+    try {
+      const response = await fetch(`/api/admin/categories?id=${parentId}`);
+      if (!response.ok) {
+        const data: { error?: string } = await response.json();
+        throw new Error(data.error ?? "Failed to load parent category");
+      }
+      const data: ApiResponse<Category> = await response.json();
+      setParentCategory(data.data[0] ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load parent category");
+    }
+  }, [parentId]);
+
+  const fetchSubcategories = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/categories?limit=100");
+      const response = await fetch(`/api/admin/categories?parent_id=${parentId}&limit=100`);
       const data: ApiResponse<Category> = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error ?? "Failed to load categories");
+        throw new Error(data.error ?? "Failed to load subcategories");
       }
 
       setCategories(data.data);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to load categories"
-      );
+      setError(err instanceof Error ? err.message : "Failed to load subcategories");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [parentId]);
 
   useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
-
-  const toggleExpand = (id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
+    if (parentId) {
+      fetchParentCategory();
+      fetchSubcategories();
+    }
+  }, [parentId, fetchParentCategory, fetchSubcategories]);
 
   const openCreateModal = () => {
     setEditingCategory(null);
@@ -86,51 +91,50 @@ export default function AdminCategories() {
       const data: { error?: string } = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error ?? "Failed to delete category");
+        throw new Error(data.error ?? "Failed to delete subcategory");
       }
 
-      setCategories((prev) => removeNode(prev, id));
+      setCategories((prev) => prev.filter((c) => c.id !== id));
       setDeleteConfirmId(null);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to delete category"
-      );
+      setError(err instanceof Error ? err.message : "Failed to delete subcategory");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const removeNode = (categories: Category[], id: string): Category[] => {
-    return categories
-      .filter((c) => c.id !== id)
-      .map((c) => ({
-        ...c,
-        children: c.children ? removeNode(c.children, id) : [],
-      }));
-  };
-
-  const hasChildren = (category: Category): boolean =>
-    Boolean(category.children && category.children.length > 0);
-
-  // Navigate to subcategory management page for a category
-  const navigateToSubcategories = (category: Category) => {
-    router.push(`/admin/categories/${category.id}`);
-  };
+  if (!parentId) {
+    return (
+      <div className="space-y-6">
+        <p className="text-text-muted">Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-xl font-bold text-primary">
-          Categories
-        </h2>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => router.push("/admin/categories")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-primary rounded-lg transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to Categories
+          </button>
+          <h2 className="font-display text-xl font-bold text-primary">
+            {parentCategory?.name || "Subcategories"}
+          </h2>
+        </div>
         <button
+          type="button"
           onClick={openCreateModal}
           className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary-container transition-colors"
         >
           <Plus className="w-4 h-4" />
-          Add Category
+          Add Subcategory
         </button>
       </div>
 
@@ -152,7 +156,7 @@ export default function AdminCategories() {
                   Slug
                 </th>
                 <th className="text-center text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
-                  Subcategories
+                  Sub-subcategories
                 </th>
                 <th className="text-center text-xs font-semibold text-text-muted uppercase tracking-wider px-4 py-3">
                   Actions
@@ -172,21 +176,17 @@ export default function AdminCategories() {
                     colSpan={4}
                     className="text-center py-12 text-text-muted text-sm"
                   >
-                    No categories found.
+                    No subcategories found.
                   </td>
                 </tr>
               ) : (
                 categories.map((category) => (
-                  <CategoryRow
+                  <SubcategoryRow
                     key={category.id}
                     category={category}
-                    level={0}
-                    expandedIds={expandedIds}
-                    onToggle={toggleExpand}
                     onEdit={openEditModal}
                     onDelete={setDeleteConfirmId}
-                    hasChildren={hasChildren}
-                    onNavigate={navigateToSubcategories}
+                    onNavigate={(id) => router.push(`/admin/categories/${id}`)}
                   />
                 ))
               )}
@@ -196,13 +196,13 @@ export default function AdminCategories() {
       </div>
 
       {showModal && (
-        <CategoryFormModal
+        <SubcategoryFormModal
           category={editingCategory}
-          parentId={editingCategory?.parent_id ?? null}
+          parentId={parentId}
           onClose={closeModal}
           onSuccess={() => {
             closeModal();
-            fetchCategories();
+            fetchSubcategories();
           }}
         />
       )}
@@ -210,8 +210,7 @@ export default function AdminCategories() {
       {deleteConfirmId && (
         <DeleteConfirmationModal
           categoryName={
-            categories.find((c) => c.id === deleteConfirmId)?.name ||
-            "this category"
+            categories.find((c) => c.id === deleteConfirmId)?.name || "this subcategory"
           }
           onCancel={() => setDeleteConfirmId(null)}
           onConfirm={() => deleteCategory(deleteConfirmId)}
@@ -222,135 +221,73 @@ export default function AdminCategories() {
   );
 }
 
-function CategoryRow({
+function SubcategoryRow({
   category,
-  level,
-  expandedIds,
-  onToggle,
   onEdit,
   onDelete,
-  hasChildren,
   onNavigate,
 }: {
   category: Category;
-  level: number;
-  expandedIds: Set<string>;
-  onToggle: (id: string) => void;
   onEdit: (category: Category) => void;
   onDelete: (id: string) => void;
-  hasChildren: (category: Category) => boolean;
-  onNavigate: (category: Category) => void;
+  onNavigate: (id: string) => void;
 }) {
-  const isExpanded = expandedIds.has(category.id);
-  const children = category.children ?? [];
-  const childCount = children.length;
-  const hasChild = hasChildren(category);
-
   return (
-    <>
-      <tr className="border-b border-border-light last:border-b-0 hover:bg-surface-subtle/50 transition-colors">
-        <td className="px-4 py-3 text-sm font-medium text-on-surface">
-          <span
-            className="inline-flex items-center gap-1"
-            style={{ paddingLeft: `${level * 20}px` }}
-          >
-            {hasChild ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onToggle(category.id);
-                }}
-                className="p-0.5 text-text-muted hover:text-primary transition-colors"
-                aria-label={isExpanded ? "Collapse" : "Expand"}
-              >
-                {isExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
-              </button>
-            ) : (
-              <span className="w-3.5 inline-block" />
-            )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onNavigate(category);
-              }}
-              className="text-primary hover:underline transition-colors"
-            >
-              {category.name}
-            </button>
+    <tr
+      className="border-b border-border-light last:border-b-0 hover:bg-surface-subtle/50 transition-colors cursor-pointer"
+      onClick={() => onNavigate(category.id)}
+    >
+      <td className="px-4 py-3 text-sm font-medium text-on-surface">
+        {category.name}
+      </td>
+      <td className="px-4 py-3 text-sm text-text-muted">{category.slug}</td>
+      <td className="px-4 py-3 text-center text-sm text-text-muted">
+        {category.children && category.children.length > 0 ? (
+          <span className="inline-flex items-center gap-1">
+            {category.children.length} sub-subcategories
           </span>
-        </td>
-        <td className="px-4 py-3 text-sm text-text-muted">{category.slug}</td>
-        <td className="px-4 py-3 text-center text-sm text-text-muted">
-          {childCount > 0 ? (
-            <span className="inline-flex items-center gap-1">
-              {childCount} sub
-              {childCount === 1 ? "" : "categories"}
-            </span>
-          ) : (
-            "—"
-          )}
-        </td>
-        <td className="px-4 py-3 text-center">
-          <div className="flex items-center justify-center gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(category);
-              }}
-              className="p-1.5 text-text-muted hover:text-primary rounded transition-colors"
-              aria-label="Edit category"
-            >
-              <Edit className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(category.id);
-              }}
-              className="p-1.5 text-text-muted hover:text-badge-discount rounded transition-colors"
-              aria-label="Delete category"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {isExpanded &&
-        children.map((child) => (
-          <CategoryRow
-            key={child.id}
-            category={child}
-            level={level + 1}
-            expandedIds={expandedIds}
-            onToggle={onToggle}
-            onEdit={onEdit}
-            onDelete={onDelete}
-            hasChildren={hasChildren}
-            onNavigate={onNavigate}
-          />
-        ))}
-    </>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td className="px-4 py-3 text-center">
+        <div className="flex items-center justify-center gap-1.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(category);
+            }}
+            className="p-1.5 text-text-muted hover:text-primary rounded transition-colors"
+            aria-label="Edit subcategory"
+          >
+            <Edit className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(category.id);
+            }}
+            className="p-1.5 text-text-muted hover:text-badge-discount rounded transition-colors"
+            aria-label="Delete subcategory"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
-function CategoryFormModal({
+function SubcategoryFormModal({
   category,
   parentId,
   onClose,
   onSuccess,
 }: {
   category: Category | null;
-  parentId: string | null;
+  parentId: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -380,7 +317,7 @@ function CategoryFormModal({
       const body = {
         name: formData.name,
         slug: formData.slug,
-        ...(parentId && { parent_id: parentId }),
+        parent_id: parentId,
       };
 
       const response = await fetch("/api/admin/categories", {
@@ -393,7 +330,7 @@ function CategoryFormModal({
 
       const data: { error?: string; success?: boolean } = await response.json();
       if (!response.ok) {
-        throw new Error(data.error ?? "Failed to save category");
+        throw new Error(data.error ?? "Failed to save subcategory");
       }
 
       onSuccess();
@@ -401,7 +338,7 @@ function CategoryFormModal({
       alert(
         err instanceof Error
           ? err.message
-          : "Failed to save category"
+          : "Failed to save subcategory"
       );
     } finally {
       setSubmitting(false);
@@ -413,7 +350,7 @@ function CategoryFormModal({
       <div className="bg-surface-card rounded-xl shadow-xl w-full max-w-md">
         <div className="p-6 border-b border-border-light flex items-center justify-between">
           <h2 className="font-display text-xl font-bold text-primary">
-            {isEdit ? "Edit Category" : parentId ? "Add Subcategory" : "Add New Category"}
+            {isEdit ? "Edit Subcategory" : "Add Subcategory"}
           </h2>
           <button
             type="button"
@@ -450,11 +387,6 @@ function CategoryFormModal({
               className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 font-mono"
             />
           </div>
-          {parentId && (
-            <p className="text-xs text-text-muted">
-              This subcategory will be nested under its parent category.
-            </p>
-          )}
         </div>
 
         <div className="p-6 border-t border-border-light flex items-center justify-end gap-3">
@@ -498,7 +430,7 @@ function DeleteConfirmationModal({
             <Trash2 className="w-5 h-5 text-badge-discount" />
           </div>
           <h3 className="font-display text-lg font-bold text-primary">
-            Delete Category
+            Delete Subcategory
           </h3>
         </div>
         <p className="text-sm text-on-surface-variant mb-6">

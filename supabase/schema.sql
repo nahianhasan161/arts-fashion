@@ -7,7 +7,8 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- 2. Categories Table
 CREATE TABLE IF NOT EXISTS public.categories (
-    id TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    parent_id TEXT REFERENCES public.categories(id) ON DELETE SET NULL,
     slug TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     count INTEGER DEFAULT 0,

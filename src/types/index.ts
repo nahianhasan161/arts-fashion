@@ -46,7 +46,7 @@ export interface Product {
 }
 
 export interface CartItem {
-  id: string; // unique item id based on productId-size-color
+  id: string;
   productId: string;
   slug: string;
   title: string;
@@ -61,10 +61,11 @@ export interface CartItem {
 
 export interface Category {
   id: string;
+  parent_id: string | null;
   slug: string;
   name: string;
-  count: number;
-  group?: "topwear" | "bottomwear" | "special";
+  children?: Category[];
+  depth?: number;
 }
 
 export interface OrderCustomerInfo {

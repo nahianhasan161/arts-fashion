@@ -20,6 +20,33 @@ async function getSupabase() {
   });
 }
 
+function buildTree(categories: Category[]): Category[] {
+  const map = new Map<string, Category>();
+  const roots: Category[] = [];
+
+  categories.forEach((cat) => {
+    map.set(cat.id, { ...cat, children: [], depth: 0 });
+  });
+
+  categories.forEach((cat) => {
+    const node = map.get(cat.id);
+    if (!node) return;
+
+    if (cat.parent_id && map.has(cat.parent_id)) {
+      const parent = map.get(cat.parent_id);
+      if (parent) {
+        node.depth = (parent.depth ?? 0) + 1;
+        parent.children = parent.children ?? [];
+        parent.children.push(node);
+      }
+    } else {
+      roots.push(node);
+    }
+  });
+
+  return roots.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
@@ -36,21 +63,39 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url);
     const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10)));
-    const offset = (page - 1) * limit;
+    const parentId = url.searchParams.get("parent_id");
+    const categoryId = url.searchParams.get("id");
 
-    const { data, error, count } = await supabase
-      .from("categories")
-      .select("*", { count: "exact" })
-      .order("name")
-      .range(offset, offset + limit - 1);
+    let query = supabase.from("categories").select("*", { count: "exact" });
+
+    // Filter by parent_id (for subcategories) or id (for single category)
+    if (categoryId) {
+      query = query.eq("id", categoryId);
+    } else if (parentId) {
+      query = query.eq("parent_id", parentId);
+    }
+
+    const { data, error, count } = await query.order("name");
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // If filtering by id, return single category wrapped in array
+    if (categoryId) {
+      const singleCategory = data && data.length > 0 ? data[0] : null;
+      return NextResponse.json({
+        data: [singleCategory].filter(Boolean) as Category[],
+        pagination: { page, limit, total: data?.length ?? 0 },
+      });
+    }
+
+    const tree = buildTree(data as Category[]);
+    const total = count ?? data.length;
+
     return NextResponse.json({
-      data: data as Category[],
-      pagination: { page, limit, total: count ?? 0 },
+      data: tree as Category[],
+      pagination: { page, limit, total },
     });
   } catch (error) {
     return handleAdminError(error);
@@ -72,7 +117,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    const { error } = await supabase.from("categories").insert([body]);
+    const { error } = await supabase.from("categories").insert([{
+      ...body,
+      id: crypto.randomUUID(),
+    }]);
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });

@@ -28,9 +28,7 @@ export function FilterSidebar({ onCloseMobile }: FilterSidebarProps) {
   const [categoryOpen, setCategoryOpen] = useState(true);
   const [priceOpen, setPriceOpen] = useState(true);
   const [sizeOpen, setSizeOpen] = useState(true);
-
-  const topwearCategories = CATEGORIES.filter((c) => c.group === "topwear");
-  const bottomwearCategories = CATEGORIES.filter((c) => c.group === "bottomwear");
+  const allCategories = CATEGORIES;
 
   const sizesList = [
     { size: "XS", count: 14 },
@@ -137,65 +135,24 @@ export function FilterSidebar({ onCloseMobile }: FilterSidebarProps) {
 
         {categoryOpen && (
           <div className="flex flex-col gap-3 pt-2 text-xs">
-            {/* Topwear */}
-            <div>
-              <span className="text-[10px] uppercase font-bold text-text-muted tracking-wider block mb-1.5">
-                Topwear
-              </span>
-              <div className="flex flex-col gap-1">
-                {topwearCategories.map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex items-center justify-between py-1 cursor-pointer hover:text-primary transition-colors text-on-surface-variant"
-                  >
-                    <span className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={subCategory === item.name}
-                        onChange={() => {
-                          setSubCategory(subCategory === item.name ? "" : item.name);
-                        }}
-                        className="w-3.5 h-3.5 rounded text-primary focus:ring-0 border-border-light"
-                      />
-                      <span>{item.name}</span>
-                    </span>
-                    <span className="text-[11px] text-text-muted font-medium">
-                      {item.count}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Bottomwear */}
-            <div className="border-t border-border-light/60 pt-2">
-              <span className="text-[10px] uppercase font-bold text-text-muted tracking-wider block mb-1.5">
-                Bottomwear
-              </span>
-              <div className="flex flex-col gap-1">
-                {bottomwearCategories.map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex items-center justify-between py-1 cursor-pointer hover:text-primary transition-colors text-on-surface-variant"
-                  >
-                    <span className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={subCategory === item.name}
-                        onChange={() => {
-                          setSubCategory(subCategory === item.name ? "" : item.name);
-                        }}
-                        className="w-3.5 h-3.5 rounded text-primary focus:ring-0 border-border-light"
-                      />
-                      <span>{item.name}</span>
-                    </span>
-                    <span className="text-[11px] text-text-muted font-medium">
-                      {item.count}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            {allCategories.map((item) => (
+              <label
+                key={item.id}
+                className="flex items-center justify-between py-1 cursor-pointer hover:text-primary transition-colors text-on-surface-variant"
+              >
+                <span className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={subCategory === item.name}
+                    onChange={() => {
+                      setSubCategory(subCategory === item.name ? "" : item.name);
+                    }}
+                    className="w-3.5 h-3.5 rounded text-primary focus:ring-0 border-border-light"
+                  />
+                  <span>{item.name}</span>
+                </span>
+              </label>
+            ))}
           </div>
         )}
       </div>

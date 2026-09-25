@@ -6,6 +6,8 @@ import { CartDrawer } from "@/components/cart/CartDrawer";
 import { WishlistDrawer } from "@/components/wishlist/WishlistDrawer";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 
+const fontSans = "font-sans";
+
 export const metadata: Metadata = {
   title: "Arts Fashion | Premium Everyday Apparel",
   description:
@@ -21,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={fontSans}>
       <body className="bg-surface font-body text-on-surface antialiased min-h-screen flex flex-col">
         <AuthProvider>
           <Header />
