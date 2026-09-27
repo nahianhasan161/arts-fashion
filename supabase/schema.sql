@@ -37,7 +37,20 @@ CREATE TABLE IF NOT EXISTS public.products (
     badge_type TEXT,
     is_featured BOOLEAN DEFAULT false,
     specs JSONB DEFAULT '{}'::jsonb,
+    color_palette_ids TEXT[] DEFAULT '{}'::text[],
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3a. Colors Table (Saved color palette for visual consistency)
+CREATE TABLE IF NOT EXISTS public.colors (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    name TEXT NOT NULL,
+    hex TEXT NOT NULL,
+    category_id TEXT REFERENCES public.categories(id) ON DELETE SET NULL,
+    is_global BOOLEAN DEFAULT false,
+    display_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- 4. Customer Profiles (Linked with auth.users)
@@ -130,6 +143,14 @@ ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.colors ENABLE ROW LEVEL SECURITY;
+
+-- ---- Colors ----
+-- Admins can manage colors
+CREATE POLICY "Allow public read access to colors" ON public.colors FOR SELECT USING (true);
+CREATE POLICY "Admins can insert colors" ON public.colors FOR INSERT WITH CHECK (public.is_admin());
+CREATE POLICY "Admins can update colors" ON public.colors FOR UPDATE USING (public.is_admin());
+CREATE POLICY "Admins can delete colors" ON public.colors FOR DELETE USING (public.is_admin());
 
 -- ---- Categories ----
 -- Public can view categories

@@ -10,7 +10,12 @@ import {
   Tag,
   Users,
   LogOut,
+  Palette,
+  Ruler,
+  Percent,
+  Ticket,
   Shield,
+  Images,
 } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 
@@ -23,8 +28,14 @@ interface SidebarItem {
 const sidebarItems: SidebarItem[] = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { name: "Products", href: "/admin/products", icon: Package },
+  { name: "Media", href: "/admin/media", icon: Images },
+  { name: "Promotions", href: "/admin/promotions", icon: Percent },
+  { name: "Coupons", href: "/admin/coupons", icon: Ticket },
+  { name: "User Groups", href: "/admin/user-groups", icon: Shield },
   { name: "Orders", href: "/admin/orders", icon: ShoppingCart },
   { name: "Categories", href: "/admin/categories", icon: Tag },
+  { name: "Colors", href: "/admin/colors", icon: Palette },
+  { name: "Sizes", href: "/admin/sizes", icon: Ruler },
   { name: "Users", href: "/admin/users", icon: Users },
 ];
 

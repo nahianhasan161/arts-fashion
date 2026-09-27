@@ -1,4 +1,5 @@
 "use client";
+import { badgeClass } from "@/lib/badges";
 
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
@@ -22,6 +23,8 @@ import {
   AlertCircle 
 } from "lucide-react";
 import { getProductBySlug } from "@/lib/services/products";
+import SizeGuideModal from "@/components/product/SizeGuideModal";
+import { useLiveBadges } from "@/lib/promotions/useLiveBadges";
 import { Product } from "@/types";
 import { useCartStore } from "@/lib/store/cart-store";
 import { useWishlistStore } from "@/lib/store/wishlist-store";
@@ -41,6 +44,33 @@ export default function ProductDetailPage() {
 
   const { addItem } = useCartStore();
   const { toggleWishlist, isInWishlist } = useWishlistStore();
+
+  // Live promotion wins over the product's static discount fields, so a
+  // badge can never outlive the promotion that produced it.
+  const liveBadges = useLiveBadges(product ? [product.id] : []);
+  const live = product ? liveBadges[product.id] : undefined;
+  const displayPrice = live?.final_price ?? product?.price ?? 0;
+  const displayPercent = live?.discount_percent ?? product?.discount_percent ?? 0;
+
+  // A badge is a label, and a label has two possible sources: the promotion
+  // that is live now, or the product's own badge. The promotion wins while it
+  // runs, and the product's own badge returns when it ends, so a badge never
+  // outlives the promotion that produced it.
+  const badgeType = live?.badge_type ?? product?.badge_type ?? null;
+  const liveBadgeLabel =
+    live?.badge_label ??
+    (displayPercent > 0
+      ? `${displayPercent}% OFF`
+      : product?.badge && product.badge_type !== "discount"
+        ? product.badge
+        : null);
+
+  // The crossed-out price is the base the saving was taken from, which for a
+  // live promotion is the server's base_price. product.original_price is the
+  // product's standing markdown base, and using it here made the two figures
+  // disagree whenever a promotion applied on top of a product that already had
+  // one.
+  const crossedOutPrice = live?.base_price ?? product?.original_price ?? 0;
 
   useEffect(() => {
     async function load() {
@@ -153,9 +183,19 @@ export default function ProductDetailPage() {
               <div className="flex-1 w-full bg-surface-card rounded-xl overflow-hidden shadow-sm border border-border-light relative group">
                 {/* Floating Badges */}
                 <div className="absolute top-4 left-4 z-20 flex flex-col gap-1.5 pointer-events-none">
-                  {product.discount_percent > 0 && (
-                    <span className="bg-badge-discount text-white font-display text-xs px-3 py-1 rounded-full uppercase tracking-wider shadow-sm font-bold">
-                      {product.discount_percent}% OFF
+                  {/*
+                    Shown when a promotion is live OR a standing markdown is in
+                    effect. The old gate was `displayPercent > 0` alone, which
+                    hid a promotion badge that carried a label but no
+                    percentage -- a "Festive" or "New" promotion has no reason
+                    to be a discount, so its percent is 0 and its badge never
+                    appeared at all.
+                  */}
+                  {liveBadgeLabel && (
+                    <span
+                      className={`${badgeClass(badgeType) ?? "bg-badge-discount text-white"} font-display text-xs px-3 py-1 rounded-full uppercase tracking-wider shadow-sm font-bold`}
+                    >
+                      {liveBadgeLabel}
                     </span>
                   )}
                   <span className="bg-primary text-white font-display text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm font-bold flex items-center gap-1">
@@ -265,16 +305,21 @@ export default function ProductDetailPage() {
               <div className="bg-surface-subtle p-space-base rounded-xl border border-border-light flex flex-col gap-2">
                 <div className="flex items-baseline gap-3">
                   <span className="font-display text-2xl sm:text-3xl font-bold text-primary">
-                    ৳ {product.price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    ৳ {displayPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                   </span>
-                  {product.original_price > product.price && (
+                  {crossedOutPrice > displayPrice && (
                     <span className="text-sm text-text-muted line-through">
-                      ৳ {product.original_price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                      ৳ {crossedOutPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                     </span>
                   )}
-                  {product.discount_percent > 0 && (
+                  {displayPercent > 0 && (
                     <span className="bg-badge-discount/10 text-badge-discount font-bold text-xs px-2.5 py-1 rounded">
-                      Save ৳ {(product.original_price - product.price).toFixed(0)} ({product.discount_percent}% Off)
+                      Save ৳ {(crossedOutPrice - displayPrice).toFixed(0)} ({displayPercent}% Off)
+                    </span>
+                  )}
+                  {live?.promotion_name && (
+                    <span className="text-[10px] text-text-muted self-center">
+                      {live.promotion_name}
                     </span>
                   )}
                 </div>
@@ -395,7 +440,7 @@ export default function ProductDetailPage() {
                     className="flex-1 h-12 bg-primary hover:bg-primary-container text-white font-display text-xs uppercase tracking-wider font-bold rounded-lg flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]"
                   >
                     <ShoppingBag className="w-4 h-4" />
-                    <span>ADD TO CART • ৳ {(product.price * quantity).toLocaleString()}</span>
+                    <span>ADD TO CART • ৳ {(displayPrice * quantity).toLocaleString()}</span>
                   </button>
                 </div>
 
@@ -445,71 +490,14 @@ export default function ProductDetailPage() {
         </div>
       </section>
 
-      {/* Size Guide Modal */}
-      {sizeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
-            <div className="flex items-center justify-between pb-3 border-b border-border-light mb-4">
-              <h3 className="font-display uppercase text-base font-bold text-primary">
-                Size Measurement Guide
-              </h3>
-              <button
-                onClick={() => setSizeModalOpen(false)}
-                className="p-1 text-text-muted hover:text-primary"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-text-muted mb-4">
-              All garment measurements are taken flat in inches (&quot;). For chest, measure across the fullest part from underarm to underarm.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left border border-border-light">
-                <thead className="bg-surface-subtle font-display uppercase">
-                  <tr>
-                    <th className="p-2.5 border-b border-border-light">Size</th>
-                    <th className="p-2.5 border-b border-border-light">Chest (&quot;)</th>
-                    <th className="p-2.5 border-b border-border-light">Length (&quot;)</th>
-                    <th className="p-2.5 border-b border-border-light">Sleeve (&quot;)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-light">
-                  <tr>
-                    <td className="p-2.5 font-bold">M</td>
-                    <td className="p-2.5">39.0</td>
-                    <td className="p-2.5">28.0</td>
-                    <td className="p-2.5">8.0</td>
-                  </tr>
-                  <tr>
-                    <td className="p-2.5 font-bold">L</td>
-                    <td className="p-2.5">40.5</td>
-                    <td className="p-2.5">29.0</td>
-                    <td className="p-2.5">8.5</td>
-                  </tr>
-                  <tr>
-                    <td className="p-2.5 font-bold">XL</td>
-                    <td className="p-2.5">43.0</td>
-                    <td className="p-2.5">30.0</td>
-                    <td className="p-2.5">9.0</td>
-                  </tr>
-                  <tr>
-                    <td className="p-2.5 font-bold">2XL</td>
-                    <td className="p-2.5">45.0</td>
-                    <td className="p-2.5">31.0</td>
-                    <td className="p-2.5">9.5</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <button
-              onClick={() => setSizeModalOpen(false)}
-              className="mt-6 w-full py-2.5 bg-primary text-white font-display uppercase text-xs font-bold rounded-lg"
-            >
-              Got it, close
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Size Guide Modal - resolved regional chart */}
+      <SizeGuideModal
+        open={sizeModalOpen}
+        onClose={() => setSizeModalOpen(false)}
+        categoryId={product.category_id ?? null}
+        subCategoryId={product.sub_category_id ?? null}
+        type="clothing"
+      />
     </div>
   );
 }

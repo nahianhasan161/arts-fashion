@@ -10,7 +10,26 @@ import {
   ShoppingBag 
 } from "lucide-react";
 import { useCartStore } from "@/lib/store/cart-store";
-import { createOrder } from "@/lib/services/orders";
+import type { CheckoutResponse, CouponQuote, CouponRejection } from "@/types";
+
+/** Coupon reason -> what the customer is told. One place, so the
+ *  checkout field and the server's rejection always read alike. */
+const COUPON_MESSAGES: Record<CouponRejection, string> = {
+  coupon_empty: "Enter a coupon code.",
+  coupon_not_found: "That coupon code does not exist.",
+  coupon_inactive: "This coupon is not active.",
+  coupon_not_started: "This coupon is not active yet.",
+  coupon_expired: "This coupon has expired.",
+  coupon_login_required: "Sign in to use this coupon code.",
+  coupon_wrong_group: "This code is not available for your account.",
+  coupon_used_up: "This coupon has been fully redeemed.",
+  coupon_user_limit_reached: "You have already used this coupon.",
+  coupon_min_order: "Your bag does not meet the minimum for this coupon.",
+  coupon_no_eligible_products: "This code does not apply to anything in your bag.",
+};
+
+const taka = (n: number) =>
+  `\u09F3 ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function CheckoutPage() {
   const [mounted, setMounted] = useState(false);
@@ -26,6 +45,17 @@ export default function CheckoutPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [orderComplete, setOrderComplete] = useState<string | null>(null);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  /** Authoritative figures returned by the order RPC, once placed. */
+  const [placed, setPlaced] = useState<CheckoutResponse | null>(null);
+
+  // Coupon field. The quote comes from the server, so the savings shown
+  // here are the savings the order RPC will actually apply.
+  const [couponInput, setCouponInput] = useState("");
+  const [couponCode, setCouponCode] = useState<string | null>(null);
+  const [couponQuote, setCouponQuote] = useState<CouponQuote | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [couponError, setCouponError] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -43,6 +73,11 @@ export default function CheckoutPage() {
       : 120;
   const grandTotal = subtotal + shippingFee;
 
+  // After a successful order these come from the database, not the cart.
+  const shownSubtotal = placed ? placed.subtotal : subtotal;
+  const shownCoupon = placed ? placed.coupon_discount_total : 0;
+  const shownTotal = placed ? placed.total_amount : grandTotal;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !phone || !address) {
@@ -51,24 +86,98 @@ export default function CheckoutPage() {
     }
 
     setSubmitting(true);
+    setOrderError(null);
     try {
-      const res = await createOrder(
-        { name, phone, email, address, city, notes },
-        items,
-        subtotal,
-        shippingFee,
-        paymentMethod
-      );
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: name,
+          customer_phone: phone,
+          customer_email: email || undefined,
+          delivery_address: address,
+          city,
+          shipping_fee: shippingFee,
+          payment_method: paymentMethod,
+          coupon_code: couponCode ?? undefined,
+          items: items.map((item) => ({
+            product_id: item.productId,
+            // Resolved server-side; deliberately sent empty.
+            variant_id: "",
+            title: item.title,
+            size: item.size,
+            color: item.color,
+            quantity: item.quantity,
+            image: item.image,
+          })),
+        }),
+      });
 
-      if (res.success) {
-        clearCart();
-        setOrderComplete(res.orderId);
+      const data = (await res.json()) as CheckoutResponse;
+
+      // The old client-side order path reported success even when the
+      // insert failed, which told customers their order was in when it
+      // was not. A non-2xx here is a real failure and is shown as one.
+      if (!res.ok || !data.success) {
+        setOrderError(data.error ?? "We could not place your order. Please try again.");
+        return;
       }
+
+      setPlaced(data);
+      clearCart();
+      setOrderComplete(data.order_id);
     } catch {
-      alert("There was an error placing your order. Please try again.");
+      setOrderError("We could not place your order. Please check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const applyCoupon = async () => {
+    const code = couponInput.trim();
+    if (!code) return;
+
+    setCouponBusy(true);
+    setCouponError(null);
+    setCouponQuote(null);
+
+    try {
+      const res = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          items: items.map((item) => ({
+            product_id: item.productId,
+            quantity: item.quantity,
+          })),
+        }),
+      });
+
+      const quote = (await res.json()) as CouponQuote;
+
+      if (!quote.valid) {
+        setCouponCode(null);
+        setCouponError(COUPON_MESSAGES[quote.reason] ?? "This coupon cannot be used.");
+        return;
+      }
+
+      setCouponQuote(quote);
+      setCouponCode(quote.code);
+      setCouponInput(quote.code);
+    } catch {
+      setCouponCode(null);
+      setCouponError("We could not check that coupon. Please try again.");
+    } finally {
+      setCouponBusy(false);
+    }
+  };
+
+  const clearCoupon = () => {
+    setCouponInput("");
+    setCouponCode(null);
+    setCouponQuote(null);
+    setCouponError(null);
   };
 
   if (orderComplete) {
@@ -89,13 +198,21 @@ export default function CheckoutPage() {
             <span>Payment Method</span>
             <span className="uppercase">{paymentMethod === "cod" ? "Cash On Delivery" : paymentMethod}</span>
           </div>
+          {placed && placed.coupon_code && (
+            <div className="flex justify-between">
+              <span className="text-text-muted">Coupon:</span>
+              <span className="text-right font-medium text-emerald-700">
+                {placed.coupon_code} (-{taka(placed.coupon_discount_total)})
+              </span>
+            </div>
+          )}
           <div className="flex justify-between pt-1">
             <span className="text-text-muted">Delivery Address:</span>
             <span className="text-right font-medium max-w-xs">{address}, {city === "dhaka" ? "Dhaka Metro" : "Outside Dhaka"}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Total Payable:</span>
-            <span className="font-bold text-sm text-primary">৳ {grandTotal.toLocaleString()}</span>
+            <span className="font-bold text-sm text-primary">{taka(shownTotal)}</span>
           </div>
         </div>
 
@@ -381,28 +498,105 @@ export default function CheckoutPage() {
               ))}
             </div>
 
+            {/* Coupon */}
+            <div className="border-t border-border-light pt-3 flex flex-col gap-2">
+              {couponQuote?.valid ? (
+                <div className="flex items-center justify-between gap-2 text-xs bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="font-bold text-emerald-800 truncate">
+                      {couponQuote.code} applied
+                    </p>
+                    <p className="text-[11px] text-emerald-700">
+                      {couponQuote.discount_type === "percentage"
+                        ? `${couponQuote.discount_value}% off your bag`
+                        : `${taka(couponQuote.discount_value)} off your bag`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearCoupon}
+                    className="text-[11px] font-bold text-emerald-800 underline shrink-0"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label className="block font-semibold text-on-surface">
+                    Have a coupon code?
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void applyCoupon();
+                        }
+                      }}
+                      placeholder="EID2026"
+                      aria-label="Coupon code"
+                      className="flex-1 h-10 px-3 rounded-lg border border-border-light focus:outline-none focus:ring-1 focus:ring-primary uppercase tracking-wider"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void applyCoupon()}
+                      disabled={couponBusy || couponInput.trim() === ""}
+                      className="h-10 px-4 rounded-lg border border-primary text-primary font-display text-[11px] uppercase tracking-wider font-bold hover:bg-primary hover:text-white transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-primary"
+                    >
+                      {couponBusy ? "..." : "Apply"}
+                    </button>
+                  </div>
+                  {couponError && (
+                    <p className="text-[11px] text-badge-discount font-medium">
+                      {couponError}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-text-muted">
+                    Sign in to use member-only codes.
+                  </p>
+                </>
+              )}
+            </div>
+
             {/* Calculations */}
             <div className="border-t border-border-light pt-3 flex flex-col gap-2 text-xs">
               <div className="flex justify-between text-text-muted">
                 <span>Subtotal</span>
-                <span className="text-on-surface font-semibold">৳ {subtotal.toLocaleString()}</span>
+                <span className="text-on-surface font-semibold">
+                  {taka(shownSubtotal)}
+                </span>
               </div>
+              {shownCoupon > 0 && (
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span>Coupon discount</span>
+                  <span>-{taka(shownCoupon)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-text-muted">
                 <span>Delivery Charge</span>
                 <span className={shippingFee === 0 ? "text-emerald-700 font-bold" : "text-on-surface font-semibold"}>
                   {shippingFee === 0 ? "FREE" : `৳ ${shippingFee}`}
                 </span>
               </div>
-              {subtotal < freeShippingThreshold && (
+              {!placed && subtotal < freeShippingThreshold && (
                 <span className="text-[10px] text-secondary">
                   💡 Add ৳ {freeShippingThreshold - subtotal} more for Free Delivery!
                 </span>
               )}
               <div className="border-t border-border-light pt-2 flex justify-between text-base font-bold text-primary">
                 <span>Total Amount</span>
-                <span className="font-display text-lg">৳ {grandTotal.toLocaleString()}</span>
+                <span className="font-display text-lg">{taka(shownTotal)}</span>
               </div>
             </div>
+
+            {orderError && (
+              <div className="rounded-lg border border-badge-discount/40 bg-badge-discount/5 px-3 py-2.5 text-[11px] text-badge-discount font-medium">
+                {orderError}
+              </div>
+            )}
 
             {/* Place Order CTA */}
             <button
@@ -410,7 +604,7 @@ export default function CheckoutPage() {
               disabled={submitting}
               className="w-full h-12 bg-primary hover:bg-primary-container text-white font-display text-xs uppercase tracking-wider font-bold rounded-lg shadow-md transition-all active:scale-[0.99] disabled:opacity-50"
             >
-              {submitting ? "Placing Order..." : `CONFIRM & PLACE ORDER • ৳ ${grandTotal.toLocaleString()}`}
+              {submitting ? "Placing Order..." : `CONFIRM & PLACE ORDER • ${taka(shownTotal)}`}
             </button>
           </div>
         </div>

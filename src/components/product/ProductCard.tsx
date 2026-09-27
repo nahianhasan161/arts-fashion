@@ -1,4 +1,5 @@
 "use client";
+import { badgeClass } from "@/lib/badges";
 
 import React from "react";
 import Image from "next/image";
@@ -7,6 +8,7 @@ import { Heart } from "lucide-react";
 import { Product } from "@/types";
 import { useCartStore } from "@/lib/store/cart-store";
 import { useWishlistStore } from "@/lib/store/wishlist-store";
+import { useLiveBadges } from "@/lib/promotions/useLiveBadges";
 
 interface ProductCardProps {
   product: Product;
@@ -16,6 +18,11 @@ interface ProductCardProps {
 export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardProps) {
   const { addItem } = useCartStore();
   const { toggleWishlist, isInWishlist } = useWishlistStore();
+
+  // A live promotion wins over the product's static badge, so the label can
+  // never outlive the promotion that produced it.
+  const liveBadges = useLiveBadges([product.id]);
+  const live = liveBadges[product.id];
 
   const isLiked = isInWishlist(product.id);
 
@@ -32,12 +39,13 @@ export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardPr
     toggleWishlist(product);
   };
 
-  const badgeColorClass =
-    product.badge_type === "discount"
-      ? "bg-badge-discount text-white"
-      : product.badge_type === "festive"
-      ? "bg-secondary text-white"
-      : "bg-badge-new text-white";
+  const badgeText = live?.badge_label ?? product.badge;
+  const badgeType = live?.badge_type ?? product.badge_type;
+  const displayPrice = live?.final_price ?? product.price;
+
+  // One shared mapping, so the card and the product page cannot give the same
+  // badge two different colours.
+  const badgeColorClass = badgeClass(badgeType);
 
   return (
     <div className="group flex flex-col bg-surface-card rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-all border border-border-light/60">
@@ -57,11 +65,11 @@ export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardPr
         />
 
         {/* Badges */}
-        {product.badge && (
+        {badgeText && (
           <span
             className={`absolute top-2 left-2 ${badgeColorClass} font-bold text-[10px] px-2 py-0.5 rounded uppercase tracking-wider shadow-sm`}
           >
-            {product.badge}
+            {badgeText}
           </span>
         )}
 
@@ -120,9 +128,9 @@ export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardPr
         {/* Pricing */}
         <div className="flex items-baseline gap-2 pt-1">
           <span className="font-display font-bold text-sm sm:text-base text-primary">
-            ৳ {product.price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            ৳ {displayPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
           </span>
-          {product.original_price > product.price && (
+          {displayPrice < product.original_price && (
             <span className="text-xs text-text-muted line-through">
               ৳ {product.original_price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
             </span>

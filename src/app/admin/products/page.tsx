@@ -6,23 +6,16 @@ import {
   Plus,
   Edit,
   Trash2,
-  X,
   Image as ImageIcon,
 } from "lucide-react";
-import type { Category, Product } from "@/types";
+import { ProductFormModal } from "@/components/admin/products/ProductFormModal";
+import type { Category, ColorOption, Product, Promotion, SizeLabel } from "@/types";
 
 interface ApiResponse<T> {
   data: T[];
   pagination: { page: number; limit: number; total: number };
   error?: string;
 }
-
-const badgeTypeOptions: { value: string; label: string }[] = [
-  { value: "discount", label: "Discount" },
-  { value: "new", label: "New" },
-  { value: "festive", label: "Festive" },
-  { value: "popular", label: "Popular" },
-];
 
 export default function AdminProducts() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -31,6 +24,12 @@ export default function AdminProducts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [colors, setColors] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
+  const [sizes, setSizes] = useState<SizeLabel[]>([]);
+  const [sizesLoading, setSizesLoading] = useState(true);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [promotionsLoading, setPromotionsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -48,6 +47,54 @@ export default function AdminProducts() {
       // Ignore category fetch errors
     } finally {
       setCategoriesLoading(false);
+    }
+  };
+
+  const fetchColors = async () => {
+    setColorsLoading(true);
+    try {
+      const response = await fetch("/api/admin/colors?limit=200");
+      const data: ApiResponse<ColorOption> = await response.json();
+      if (response.ok) {
+        setColors(data.data);
+      }
+    } catch {
+      // Ignore color fetch errors
+    } finally {
+      setColorsLoading(false);
+    }
+  };
+
+  const fetchSizes = async () => {
+    setSizesLoading(true);
+    try {
+      const response = await fetch("/api/admin/sizes?limit=200");
+      const data: ApiResponse<SizeLabel> = await response.json();
+      if (response.ok) {
+        setSizes(data.data);
+      }
+    } catch {
+      // Ignore size fetch errors
+    } finally {
+      setSizesLoading(false);
+    }
+  };
+
+  // Only the options an admin can act on: a withdrawn size or colour should
+  // not be offered, though both still show in the matrix of a product that
+  // already uses them.
+  const fetchPromotions = async () => {
+    setPromotionsLoading(true);
+    try {
+      const response = await fetch("/api/admin/promotions?limit=100");
+      const data: ApiResponse<Promotion> = await response.json();
+      if (response.ok) {
+        setPromotions(data.data);
+      }
+    } catch {
+      // Ignore promotion fetch errors
+    } finally {
+      setPromotionsLoading(false);
     }
   };
 
@@ -89,11 +136,18 @@ export default function AdminProducts() {
 
   useEffect(() => {
     fetchProducts();
-    fetchCategories();
-    const timer = setTimeout(fetchProducts, 500);
-    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
+
+  // The option lists are reference data, not a function of the search, so they
+  // are loaded once rather than on every keystroke.
+  useEffect(() => {
+    fetchCategories();
+    fetchColors();
+    fetchSizes();
+    fetchPromotions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const openCreateModal = () => {
     setEditingProduct(null);
@@ -301,10 +355,16 @@ export default function AdminProducts() {
 
       {/* Product Form Modal */}
       {showModal && (
-        <ProductFormModal
+         <ProductFormModal
           product={editingProduct}
           categories={categories}
           categoriesLoading={categoriesLoading}
+          colors={colors}
+          colorsLoading={colorsLoading}
+          sizes={sizes}
+          sizesLoading={sizesLoading}
+          promotions={promotions}
+          promotionsLoading={promotionsLoading}
           onClose={closeModal}
           onSuccess={() => {
             closeModal();
@@ -324,422 +384,6 @@ export default function AdminProducts() {
           submitting={submitting}
         />
       )}
-    </div>
-  );
-}
-
-function ProductFormModal({
-  product,
-  categories,
-  categoriesLoading,
-  onClose,
-  onSuccess,
-}: {
-  product: Product | null;
-  categories: Category[];
-  categoriesLoading: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [submitting, setSubmitting] = useState(false);
-  const isEdit = product !== null;
-  const [selectedCategoryId, setSelectedCategoryId] = useState(() => {
-    if (!product?.category) return "";
-    const cat = categories.find((c) => c.name === product.category);
-    return cat?.id ?? "";
-  });
-
-  const categoryOptions = categories.filter((c) => !c.parent_id);
-  const subcategoryOptions = categories.filter(
-    (c) => c.parent_id === selectedCategoryId
-  );
-
-  const [formDataState, setFormDataState] = useState(() => ({
-    title: product?.title ?? "",
-    slug: product?.slug ?? "",
-    category: product?.category ?? "",
-    sub_category: product?.sub_category ?? "",
-    description: product?.description ?? "",
-    price: product?.price ?? 0,
-    original_price: product?.original_price ?? 0,
-    discount_percent: product?.discount_percent ?? 0,
-    images: product?.images?.join("\n") ?? "",
-    colors: product?.colors ? JSON.stringify(product.colors, null, 2) : "",
-    sizes: product?.sizes ? JSON.stringify(product?.sizes ?? [], null, 2) : "",
-    stock: product?.stock ?? 0,
-    badge: product?.badge ?? "",
-    badge_type: product?.badge_type ?? "",
-    is_featured: product?.is_featured ?? false,
-    specs: product?.specs ? JSON.stringify(product.specs, null, 2) : "",
-  }));
-
-  // Initialize selectedCategoryId based on product's category/sub_category
-  useEffect(() => {
-    if (isEdit && product?.category) {
-      if (product.sub_category) {
-        const subCat = categories.find((c) => c.name === product.sub_category);
-        setSelectedCategoryId(subCat?.parent_id ?? "");
-      } else {
-        const cat = categories.find((c) => c.name === product.category);
-        setSelectedCategoryId(cat?.id ?? "");
-      }
-    }
-  }, [isEdit, product?.category, product?.sub_category, categories]);
-
-  // Derive category name from selected subcategory
-  useEffect(() => {
-    if (formDataState.sub_category && selectedCategoryId) {
-      const subCat = categories.find((c) => c.name === formDataState.sub_category);
-      if (subCat && subCat.parent_id) {
-        const parentCat = categories.find((c) => c.id === subCat.parent_id);
-        if (parentCat) {
-          setFormDataState(prev => ({ ...prev, category: parentCat.name }));
-        }
-      }
-    }
-  }, [formDataState.sub_category, selectedCategoryId, categories]);
-
-  const handleChange = (
-    field: string,
-    value: string | number | boolean
-  ) => {
-    setFormDataState((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSubmit = async () => {
-    setSubmitting(true);
-    try {
-      const body: Record<string, unknown> = {
-        slug: formDataState.slug,
-        title: formDataState.title,
-        category: formDataState.category,
-        sub_category: formDataState.sub_category || null,
-        description: formDataState.description,
-        price: formDataState.price,
-        original_price: formDataState.original_price,
-        discount_percent: formDataState.discount_percent,
-        images: formDataState.images
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        colors: formDataState.colors ? JSON.parse(formDataState.colors) : [],
-        sizes: formDataState.sizes ? JSON.parse(formDataState.sizes) : [],
-        stock: formDataState.stock,
-        badge: formDataState.badge || null,
-        badge_type: formDataState.badge_type || null,
-        is_featured: formDataState.is_featured,
-        specs: formDataState.specs ? JSON.parse(formDataState.specs) : {},
-      };
-
-      let response: Response;
-      if (isEdit) {
-        response = await fetch("/api/admin/products", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: product!.id, ...body }),
-        });
-      } else {
-        response = await fetch("/api/admin/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-      }
-
-      const data: { error?: string; success?: boolean } = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "Failed to save product");
-      }
-
-      onSuccess();
-    } catch (err) {
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Failed to save product"
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface-card rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-border-light flex items-center justify-between">
-          <h2 className="font-display text-xl font-bold text-primary">
-            {isEdit ? "Edit Product" : "Add New Product"}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-text-muted hover:text-primary rounded transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Title *
-              </label>
-              <input
-                type="text"
-                value={formDataState.title}
-                onChange={(e) => handleChange("title", e.target.value)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Slug *
-              </label>
-              <input
-                type="text"
-                value={formDataState.slug}
-                onChange={(e) => handleChange("slug", e.target.value)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Category *
-              </label>
-              {categoriesLoading ? (
-                <div className="w-full h-9 px-3 border border-border-light rounded-lg text-sm bg-surface-subtle animate-pulse" />
-              ) : (
-                <select
-                  value={
-                    categories.find((c) => c.name === formDataState.category)?.id ?? formDataState.category
-                  }
-                  onChange={(e) => {
-                    const cat = categories.find((c) => c.id === e.target.value);
-                    setSelectedCategoryId(e.target.value);
-                    handleChange("category", cat?.name ?? e.target.value);
-                  }}
-                  className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 appearance-none bg-white"
-                >
-                  <option value="">Select category *</option>
-                  {categoryOptions.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Sub-category
-              </label>
-              {categoriesLoading || !selectedCategoryId ? (
-                <div className="w-full h-9 px-3 border border-border-light rounded-lg text-sm bg-surface-subtle animate-pulse" />
-              ) : (
-                <select
-                  value={
-                    subcategoryOptions.find(
-                      (c) => c.name === formDataState.sub_category
-                    )?.id ?? formDataState.sub_category
-                  }
-                  onChange={(e) => {
-                    const cat = subcategoryOptions.find(
-                      (c) => c.id === e.target.value
-                    );
-                    handleChange(
-                      "sub_category",
-                      cat?.name ?? e.target.value
-                    );
-                  }}
-                  className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 appearance-none bg-white"
-                >
-                  <option value="">Select sub-category</option>
-                  {subcategoryOptions.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Price *
-              </label>
-              <input
-                type="number"
-                value={formDataState.price}
-                onChange={(e) => handleChange("price", parseFloat(e.target.value) || 0)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Original Price *
-              </label>
-              <input
-                type="number"
-                value={formDataState.original_price}
-                onChange={(e) =>
-                  handleChange(
-                    "original_price",
-                    parseFloat(e.target.value) || 0
-                  )
-                }
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Discount %
-              </label>
-              <input
-                type="number"
-                value={formDataState.discount_percent}
-                onChange={(e) =>
-                  handleChange(
-                    "discount_percent",
-                    parseInt(e.target.value) || 0
-                  )
-                }
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Stock
-              </label>
-              <input
-                type="number"
-                value={formDataState.stock}
-                onChange={(e) => handleChange("stock", parseInt(e.target.value) || 0)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Badge
-              </label>
-              <input
-                type="text"
-                value={formDataState.badge}
-                onChange={(e) => handleChange("badge", e.target.value)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Badge Type
-              </label>
-              <select
-                value={formDataState.badge_type}
-                onChange={(e) => handleChange("badge_type", e.target.value)}
-                className="w-full h-9 px-3 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 appearance-none"
-              >
-                <option value="">None</option>
-                {badgeTypeOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-on-surface mb-1.5">
-              Description
-            </label>
-            <textarea
-              rows={3}
-              value={formDataState.description}
-              onChange={(e) => handleChange("description", e.target.value)}
-              className="w-full px-3 py-2 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-on-surface mb-1.5">
-              Images (one URL per line)
-            </label>
-            <textarea
-              rows={3}
-              value={formDataState.images}
-              onChange={(e) => handleChange("images", e.target.value)}
-              placeholder="https://example.com/image1.jpg"
-              className="w-full px-3 py-2 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none font-mono"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Colors (JSON array)
-              </label>
-              <textarea
-                rows={4}
-                value={formDataState.colors}
-                onChange={(e) => handleChange("colors", e.target.value)}
-                placeholder='[{"name":"Red","hex":"#ff0000"}]'
-                className="w-full px-3 py-2 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none font-mono"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-on-surface mb-1.5">
-                Sizes (JSON array)
-              </label>
-              <textarea
-                rows={4}
-                value={formDataState.sizes}
-                onChange={(e) => handleChange("sizes", e.target.value)}
-                placeholder='[{"size":"M","chest":"40","stock":10}]'
-                className="w-full px-3 py-2 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none font-mono"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-on-surface mb-1.5">
-              Specs (JSON object)
-            </label>
-            <textarea
-              rows={3}
-              value={formDataState.specs}
-              onChange={(e) => handleChange("specs", e.target.value)}
-              placeholder='{"Fabric":"100% Cotton","Weight":"175 GSM"}'
-              className="w-full px-3 py-2 border border-border-light rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-primary/20 resize-none font-mono"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="is_featured"
-              checked={formDataState.is_featured}
-              onChange={(e) => handleChange("is_featured", e.target.checked)}
-            />
-            <label htmlFor="is_featured" className="text-sm text-on-surface">
-              Featured product
-            </label>
-          </div>
-        </div>
-
-        <div className="p-6 border-t border-border-light flex items-center justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 border border-border-light rounded-lg text-sm font-semibold text-text-muted hover:bg-surface-subtle transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary-container transition-colors disabled:opacity-50"
-          >
-            {submitting ? "Saving..." : isEdit ? "Update" : "Create"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
