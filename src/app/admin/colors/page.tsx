@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Edit, Trash2, X, Palette, Search, Sparkles } from "lucide-react";
 import type { ColorPalette, Category } from "@/types";
+import { flattenCategoryTree } from "@/lib/utils";
 
 interface ApiResponse<T> {
   data: T[];
@@ -56,11 +57,9 @@ export default function AdminColors() {
       const response = await fetch("/api/admin/categories?limit=100");
       const data: ApiResponse<Category> = await response.json();
       if (response.ok) {
-        // Flatten categories for selecting in filter
-        const flatten = (cats: Category[]): Category[] => {
-          return cats.flatMap((c) => [c, ...(c.children ? flatten(c.children) : [])]);
-        };
-        setCategories(flatten(data.data));
+        // Flatten categories for selecting in filter. The endpoint returns a
+        // tree; this shared helper is the single definition of that flatten.
+        setCategories(flattenCategoryTree(data.data ?? []));
       }
     } catch {
       // Ignore category fetch errors

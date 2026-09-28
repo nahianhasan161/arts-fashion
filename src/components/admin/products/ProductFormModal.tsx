@@ -36,13 +36,17 @@ import {
   type MatrixCell,
   type MatrixState,
 } from "@/components/admin/products/VariantMatrix";
-import type {
-  Category,
-  ColorOption,
-  Product,
-  ProductStatus,
-  Promotion,
-  SizeOption,
+import {
+  PRODUCT_GENDERS,
+  PRODUCT_GENDER_LABELS,
+  isProductGender,
+  type Category,
+  type ColorOption,
+  type Product,
+  type ProductGender,
+  type ProductStatus,
+  type Promotion,
+  type SizeOption,
 } from "@/types";
 
 const badgeTypeOptions: { value: string; label: string }[] = [
@@ -104,6 +108,26 @@ function slugify(value: string): string {
  * product saved through it was stored at zero. A field whose value is ignored
  * is worse than no field, because the admin sees it and believes it.
  */
+/**
+ * One editable spec pair.
+ *
+ * `uid` exists because the rows used to be keyed by their array index, which
+ * is a real defect rather than a style preference. React keeps the DOM node
+ * and the controlled value belonging to a position, so deleting the first of
+ * three rows re-uses the second row's node for the third: the inputs came back
+ * showing the wrong pair, and because both inputs are controlled the wrong text
+ * was then saved. A stable per-row id makes a delete remove exactly one row.
+ */
+interface SpecRow {
+  uid: string;
+  key: string;
+  value: string;
+}
+
+/** Monotonic within a mounted form; the value only has to be unique per session. */
+let specUid = 0;
+const nextSpecUid = () => `spec-${++specUid}`;
+
 interface FormState {
   title: string;
   slug: string;
@@ -120,7 +144,17 @@ interface FormState {
   badge_type: string;
   is_featured: boolean;
   status: ProductStatus;
-  specs: { key: string; value: string }[];
+  /**
+   * Audience the product is sold to, or null when not assigned.
+   *
+   * null rather than "" on purpose. The <select> renders "not assigned" as an
+   * empty option value, but the state models the database: three audiences or
+   * nothing. A union with the empty string here also breaks useReducer's
+   * overload resolution, which is how a four-value dropdown became a
+   * twenty-eight-error cascade the first time it was added.
+   */
+  gender: ProductGender | null;
+  specs: SpecRow[];
   colorIds: string[];
   sizeIds: string[];
   matrix: MatrixState;
@@ -158,6 +192,7 @@ function blankState(): FormState {
     badge_type: "",
     is_featured: false,
     status: "draft",
+    gender: null,
     specs: [],
     colorIds: [],
     sizeIds: [],
@@ -180,12 +215,25 @@ function matrixFromProduct(product: Product): MatrixState {
   const colorIds = product.color_ids ?? [];
   const sizeIds = product.size_ids ?? [];
 
-  const byKey = new Map((product.variants ?? []).map((v) => [v.variant_key, v]));
+  // Keyed by the FORM's own cellKey, rebuilt from each variant's color_id and
+  // size_id, rather than by the variant's `variant_key` column.
+  //
+  // The two used different conventions. cellKey renders a missing axis as
+  // "-", while the database generates variant_key as
+  // COALESCE(color_id,'') || ':' || COALESCE(size_id,'') -- an empty string.
+  // So a product with colours but no sizes looked up "<colour>:-" and never
+  // found the stored "<colour>:", every cell silently fell back to
+  // emptyCell(), and saving the form then wrote stock 0 and cleared the SKU.
+  // Rebuilding the key from the ids means this cannot drift again if the
+  // generated column's format ever changes.
+  const byKey = new Map(
+    (product.variants ?? []).map((v) => [cellKey(v.color_id, v.size_id), v]),
+  );
 
   if (colorIds.length > 0 && sizeIds.length > 0) {
     for (const c of colorIds) {
       for (const s of sizeIds) {
-        const v = byKey.get(`${c}:${s}`);
+        const v = byKey.get(cellKey(c, s));
         matrix[cellKey(c, s)] = v
           ? {
               stock: v.stock,
@@ -198,7 +246,7 @@ function matrixFromProduct(product: Product): MatrixState {
     }
   } else {
     for (const c of colorIds) {
-      const v = byKey.get(`${c}:-`);
+      const v = byKey.get(cellKey(c, null));
       matrix[cellKey(c, null)] = v
         ? {
             stock: v.stock,
@@ -209,7 +257,7 @@ function matrixFromProduct(product: Product): MatrixState {
         : emptyCell();
     }
     for (const s of sizeIds) {
-      const v = byKey.get(`-:${s}`);
+      const v = byKey.get(cellKey(null, s));
       matrix[cellKey(null, s)] = v
         ? {
             stock: v.stock,
@@ -292,7 +340,7 @@ function reducer(state: FormState, action: Action): FormState {
       };
 
     case "addSpec":
-      return { ...state, specs: [...state.specs, { key: "", value: "" }] };
+      return { ...state, specs: [...state.specs, { uid: nextSpecUid(), key: "", value: "" }] };
 
     case "removeSpec":
       return { ...state, specs: state.specs.filter((_, i) => i !== action.index) };
@@ -413,7 +461,16 @@ export function ProductFormModal({
       badge_type: p.badge_type ?? "",
       is_featured: p.is_featured ?? false,
       status: p.status ?? "draft",
-      specs: Object.entries(p.specs ?? {}).map(([key, value]) => ({ key, value: String(value) })),
+      // Read through the type guard rather than cast: the column is
+      // CHECK-constrained, but a value written before the check existed, or by
+      // a direct SQL write, must not put an unrecognised string into the select
+      // where React would render it as an option with no label.
+      gender: p.gender && isProductGender(p.gender) ? p.gender : null,
+      specs: Object.entries(p.specs ?? {}).map(([key, value]) => ({
+        uid: nextSpecUid(),
+        key,
+        value: String(value),
+      })),
       colorIds: p.color_ids ?? [],
       sizeIds: p.size_ids ?? [],
       matrix: matrixFromProduct(p),
@@ -467,6 +524,14 @@ export function ProductFormModal({
    * discount below. Sending a sale price would be sending a value the server
    * ignores, which is how a 0-price product looks deliberate to the next
    * person to read this code.
+   *
+   * `stock` is absent for the same reason, and it was a real omission until
+   * this pass: admin_save_product never wrote products.stock. A trigger keeps
+   * it equal to the sum of the active variants, so the number the Stock field
+   * displayed was already not the number that would be stored. The field
+   * itself is kept, because the admin still sets per-variant stock in the
+   * matrix and the product total is useful to see, but it is labelled as
+   * derived and it is not sent.
    */
   const buildPayload = () => {
     const specs: Record<string, string> = {};
@@ -487,11 +552,14 @@ export function ProductFormModal({
       regular_price: state.regular_price,
       discount_type: state.discount_type,
       discount_value: state.discount_value,
-      stock: state.stock,
       badge: state.badge || null,
       badge_type: state.badge_type || null,
       is_featured: state.is_featured,
       status: state.status,
+      // Sent as JSON null, which the server's NULLIF turns into SQL NULL, so
+      // "not assigned" stays distinct from all three audiences and the
+      // Unassigned filter bucket remains reachable.
+      gender: state.gender,
       specs,
       color_ids: state.colorIds,
       size_ids: state.sizeIds,
@@ -551,6 +619,26 @@ export function ProductFormModal({
       setFormError("Every spec needs a name, or the value has nowhere to go.");
       return;
     }
+    // specs is an object keyed by name, so two rows sharing a name are one row
+    // and the second silently overwrites the first. "Fabric: Cotton" and
+    // "Fabric: Linen" saved as a single Fabric spec reading "Linen", and the
+    // admin was shown no warning. Case-insensitive because the storefront
+    // shows names as labels, where "Fabric" and "fabric" read as one spec.
+    const seenSpecs = new Set<string>();
+    let duplicateSpec: string | null = null;
+    for (const s of state.specs) {
+      const k = s.key.trim().toLowerCase();
+      if (!k) continue;
+      if (seenSpecs.has(k)) {
+        duplicateSpec = s.key.trim();
+        break;
+      }
+      seenSpecs.add(k);
+    }
+    if (duplicateSpec) {
+      setFormError(`Two specs are both named "${duplicateSpec}". Spec names have to be different.`);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -574,10 +662,31 @@ export function ProductFormModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface-card rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+    // role="dialog" and aria-modal, so a screen reader announces this as a
+    // dialog and the content behind it is treated as inert. Without them the
+    // modal is just a div, and there is no way to close it from the keyboard
+    // at all: Escape did nothing and the backdrop was not clickable.
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onMouseDown={(e) => {
+        // mousedown, not click, so a drag that starts inside the panel and
+        // ends on the backdrop does not discard the form. The check is on the
+        // backdrop itself: React's onMouseDown on the wrapper would also fire
+        // for clicks on children, which is why e.target is compared.
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pf-title-heading"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+        className="bg-surface-card rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"
+      >
         <div className="p-6 border-b border-border-light flex items-center justify-between">
-          <h2 className="font-display text-xl font-bold text-primary">
+          <h2 id="pf-title-heading" className="font-display text-xl font-bold text-primary">
             {isEdit ? "Edit Product" : "Add New Product"}
           </h2>
           <button
@@ -748,6 +857,33 @@ export function ProductFormModal({
               ))}
             </Dropdown>
 
+            <Dropdown
+              id="pf-gender"
+              label="Gender / Age Category"
+              // The select's "not assigned" option has an empty value, so the
+              // empty string is translated back to null on the way in. The two
+              // are the same thing to the database and different things to a
+              // <select>.
+              value={state.gender ?? ""}
+              onChange={(v) =>
+                set("gender", v === "" ? null : (v as ProductGender))
+              }
+              hint={
+                state.gender
+                  ? `Shown in the ${
+                      PRODUCT_GENDER_LABELS[state.gender]
+                    } section of the storefront.`
+                  : "Not assigned. The product still saves and still shows in Shop All, but it will be missing from the Men, Women and Kids sections until this is set."
+              }
+            >
+              <option value="">Not assigned</option>
+              {PRODUCT_GENDERS.map((g) => (
+                <option key={g} value={g}>
+                  {PRODUCT_GENDER_LABELS[g]}
+                </option>
+              ))}
+            </Dropdown>
+
             <div>
               <label htmlFor="pf-stock" className={labelClass}>
                 Stock
@@ -768,7 +904,8 @@ export function ProductFormModal({
               />
               {(state.colorIds.length > 0 || state.sizeIds.length > 0) && (
                 <p className="mt-1 text-[11px] text-text-muted">
-                  This is the total across every variant. Set each figure in the matrix below.
+                  This is the total across every variant, recalculated by the database. Set each
+                  figure in the matrix below.
                 </p>
               )}
             </div>
@@ -981,7 +1118,7 @@ export function ProductFormModal({
                 </p>
               )}
               {state.specs.map((spec, i) => (
-                <div key={i} className="flex items-center gap-2">
+                <div key={spec.uid} className="flex items-center gap-2">
                   <input
                     type="text"
                     value={spec.key}

@@ -19,6 +19,7 @@ const ref = process.env.SUPBASE_PROJECT_REF ?? "khebwqdhucrdfpfadxry";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const publishable = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 import { createServerClient } from "@supabase/ssr";
+import { listKeys, deleteKeys, tigrisReady, expectedUrlPrefix, TIGRIS_BUCKET } from "./tigris-helpers.mjs";
 
 const Q = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 const J = (o) => Q(JSON.stringify(o)) + "::jsonb";
@@ -203,30 +204,25 @@ async function signIn(email) {
  * nothing and every staged file survives.
  */
 async function cleanup({ token, expectClean = false } = {}) {
-  const rows = await sql(
-    `SELECT name FROM storage.objects
-      WHERE bucket_id='product-images'
-        AND (name LIKE ${Q("unattached/%")} OR name LIKE ${Q(PRODUCT + "/%")})`
-  );
-  const orphanPaths = rows.map((r) => r.name);
+  // Objects live in Tigris, so the leftovers are found by listing the bucket
+  // rather than by querying storage.objects. The two prefixes are this run's
+  // own: the product folder, and the staging folder for a file that was never
+  // attached.
+  const prefixes = [`unattached/`, `${PRODUCT}/`];
+  const orphanPaths = tigrisReady() ? await listKeys(prefixes) : [];
 
   if (orphanPaths.length) {
-    if (token) {
-      for (const p of orphanPaths) {
-        const res = await fetch(
-          `${supabaseUrl}/storage/v1/object/product-images/${p.split("/").map(encodeURIComponent).join("/")}`,
-          { method: "DELETE", headers: { apikey: publishable, Authorization: `Bearer ${token}` } }
-        );
-        if (!res.ok && res.status !== 404) {
-          console.error(`  ! could not remove ${p}: ${res.status}`);
-        }
-      }
-    } else {
-      console.log(
-        `  note: ${orphanPaths.length} orphaned object(s) from a previous run; ` +
-          "they need a signed-in admin to remove, which this pre-run pass does not have"
-      );
-    }
+    // `token` is ignored here. It used to gate removal on a signed-in admin,
+    // because Supabase's Storage REST API rejects the Management token. The
+    // Tigris client is signed with the service keys, so removal no longer
+    // depends on a session, and a pre-run pass with no admin can still clear
+    // the residue of an aborted run. The parameter is kept so the call sites
+    // do not change.
+    void token;
+    const failed = await deleteKeys(orphanPaths);
+    for (const key of failed) console.error(`  ! could not remove ${key}`);
+  } else if (!tigrisReady()) {
+    console.log("  note: Tigris credentials are missing; object cleanup was skipped");
   }
 
   await must(`DELETE FROM public.product_images WHERE product_id=${Q(PRODUCT)}`);
@@ -242,13 +238,11 @@ async function cleanup({ token, expectClean = false } = {}) {
   paths.length = 0;
 
   if (expectClean) {
-    const left = await sql(
-      `SELECT count(*)::int c FROM storage.objects
-        WHERE bucket_id='product-images'
-          AND (name LIKE ${Q("unattached/%")} OR name LIKE ${Q(PRODUCT + "/%")})`
-    );
-    if (left[0].c !== 0) {
-      console.error(`  ! ${left[0].c} object(s) survived cleanup`);
+    // Checked against the bucket rather than the database: an object can
+    // outlive its row, and that is the case this assertion exists to catch.
+    const left = tigrisReady() ? await listKeys([`unattached/`, `${PRODUCT}/`]) : [];
+    if (left.length !== 0) {
+      console.error(`  ! ${left.length} object(s) survived cleanup in ${TIGRIS_BUCKET}`);
       fails++;
     }
   }
@@ -318,7 +312,11 @@ try {
   ok("attachment id returned", typeof staged.id === "string");
   paths.push(staged.storage_path);
   check("staged under unattached/", staged.storage_path.startsWith("unattached/"), true);
-  ok("url is a public storage url", /^https:\/\/.+\/storage\/v1\/object\/public\/product-images\//.test(staged.url));
+  // The shape depends on TIGRIS_STORAGE_PUBLIC: a Tigris URL once the bucket
+  // is public, and the app's own streaming route until then. Both are what
+  // publicUrlFor() returns, so the assertion follows the deployment rather
+  // than hardcoding one of them.
+  ok("url is a served media url", staged.url.startsWith(expectedUrlPrefix()) && staged.url.includes(staged.storage_path));
   ok("metadata recorded", staged.mime_type === "image/png" && staged.byte_size > 0);
 
   console.log("\n=== 4. folders ===");

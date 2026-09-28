@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, handleAdminError } from "@/lib/admin/auth";
 import { getAdminSupabase } from "@/lib/admin/supabase";
-import { removeMediaObjects, publicUrlFor } from "@/lib/media/upload";
+import { moveMediaObject, removeMediaObjects, publicUrlFor } from "@/lib/media/upload";
 import { mediaErrorResponse } from "@/lib/media/mapping";
 
 /**
@@ -59,12 +59,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     const oldPath = String(row.storage_path);
     const newPath = `${productId}/${crypto.randomUUID()}.${ext}`;
 
-    const { error: moveError } = await supabase.storage
-      .from("product-images")
-      .copy(oldPath, newPath);
+    const moveError = await moveMediaObject(supabase, oldPath, newPath);
 
     if (moveError) {
-      return NextResponse.json({ error: moveError.message }, { status: 500 });
+      return NextResponse.json({ error: moveError }, { status: 500 });
     }
 
     // admin_attach_media re-validates the row's own storage_path against

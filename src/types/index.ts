@@ -91,6 +91,13 @@ export interface Product {
   category_id?: string | null;
   sub_category_id?: string | null;
   description: string;
+  /**
+   * Plain-text summary for cards, search rows and meta descriptions. The
+   * `description` field is rich HTML and must not be dropped into an attribute;
+   * this is the field written for that purpose. Optional, because products
+   * created before it existed do not have one.
+   */
+  short_description?: string | null;
   price: number;
   original_price: number;
   /** Pre-discount price. Present in the live schema; drives promotion maths. */
@@ -109,9 +116,44 @@ export interface Product {
   is_featured?: boolean;
   specs?: Record<string, string>;
   color_palette_ids?: string[];
+  /**
+   * Free merchandising tags, e.g. `["summer", "eid-collection"]`. Stored
+   * verbatim, so compare case-insensitively rather than assuming normalised
+   * text.
+   */
+  tags?: string[];
+  /**
+   * Unit acquisition cost. Absent means not recorded, which is distinct from
+   * zero and must never be treated as free goods. Admin and reporting only:
+   * this value must not reach a customer-facing price.
+   */
+  cost_price?: number | null;
   /** Publication state. Absent on rows written before it existed. */
   status?: ProductStatus;
+  /**
+   * Audience this product is sold to. Absent or null means not yet assigned,
+   * which the admin filters treat as their own bucket rather than as "men".
+   */
+  gender?: ProductGender | null;
   created_at?: string;
+  /**
+   * Last write to the product row. Distinct from both `created_at` and
+   * `published_at`: the admin list sorts on it and shows it in the table, since
+   * "which of these did someone just fix" is the question a listing raises.
+   */
+  updated_at?: string;
+  /**
+   * When the product first went live. Distinct from `created_at`, which is
+   * when the row was first typed in — a product drafted for a month and then
+   * published is new on `published_at` and old on `created_at`.
+   */
+  published_at?: string | null;
+  /**
+   * When an admin retired the product. `null` is the normal state. A non-null
+   * value means the row is kept for order history but is not buyable, so every
+   * storefront read filters it out.
+   */
+  deleted_at?: string | null;
   /** Canonical option ids, when the product has a variant matrix. */
   color_ids?: string[];
   size_ids?: string[];
@@ -120,6 +162,31 @@ export interface Product {
 }
 
 export type ProductStatus = "draft" | "published" | "archived";
+
+/**
+ * The audience a product is sold to.
+ *
+ * Distinct from the category, which records what the garment is: a Polo is a
+ * Polo whether it is sold to men, women or kids. `null` on a Product means not
+ * yet assigned, which is a real state for a newly authored product and is not
+ * the same as any of the three. The database constrains the column to exactly
+ * these values or NULL.
+ */
+export type ProductGender = "men" | "women" | "kids";
+
+/** The three audiences, for filter controls and option lists. */
+export const PRODUCT_GENDERS: ProductGender[] = ["men", "women", "kids"];
+
+/** Human labels. The stored value is always lower-case. */
+export const PRODUCT_GENDER_LABELS: Record<ProductGender, string> = {
+  men: "Men",
+  women: "Women",
+  kids: "Kids",
+};
+
+export function isProductGender(value: unknown): value is ProductGender {
+  return value === "men" || value === "women" || value === "kids";
+}
 
 export interface CartItem {
   id: string;

@@ -164,7 +164,10 @@ check("file_name", a.file_name, "a.png");
 check("mime_type", a.mime_type, "image/png");
 check("byte_size", a.byte_size, 2048);
 check("alt_text", a.alt_text, "Front");
-check("url is the public url", a.url.includes("/product-images/ml-1/a.png"), true);
+// The bucket moved to Tigris, so the path is asserted without the provider's
+// host: what matters is that the URL the app hands a browser still ends at the
+// object's own path.
+check("url ends at the object path", a.url.endsWith("/ml-1/a.png"), true);
 check("in_use detected", a.in_use, true);
 check("is_primary", a.is_primary, true);
 

@@ -28,12 +28,22 @@ const STATUS_BY_ERROR: Record<string, number> = {
   invalid_percentage_discount: 400,
   invalid_flat_discount: 400,
   invalid_status: 400,
+  invalid_gender: 400,
+  invalid_cost_price: 400,
   invalid_variants: 400,
   unknown_color: 400,
   unknown_size: 400,
   unknown_promotion: 400,
   negative_stock: 400,
   too_many_variants: 400,
+  product_id_required: 400,
+
+  // Retiring a product that is already retired, and restoring one that is not.
+  // Both are 409 rather than 400: the request was well formed, it conflicts
+  // with the row's current state. Without these the delete route reported a
+  // generic 500 for a plain double-click.
+  product_already_deleted: 409,
+  product_not_deleted: 409,
 
   // The slug is a shared, unique resource, so a collision is a conflict
   // rather than a malformed request.
@@ -64,12 +74,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_percentage_discount: "A percentage discount cannot exceed 100.",
   invalid_flat_discount: "A flat discount cannot exceed the regular price.",
   invalid_status: "Choose a status of draft, published, or archived.",
+  invalid_gender: "Choose an audience of Men, Women, or Kids.",
+  invalid_cost_price: "Enter a cost of zero or more, or leave the field blank.",
   invalid_variants: "The variant list was not in a form the server could read.",
   unknown_color: "One of the selected colours no longer exists.",
   unknown_size: "One of the selected sizes no longer exists.",
   unknown_promotion: "One of the selected promotions no longer exists.",
   negative_stock: "Stock cannot be negative.",
   too_many_variants: "That many colour and size combinations exceeds the per-product limit.",
+  product_id_required: "A product id is required.",
+  product_already_deleted: "That product has already been removed.",
+  product_not_deleted: "That product is not removed, so there is nothing to restore.",
   product_not_found: "That product no longer exists. Reload the list.",
 };
 

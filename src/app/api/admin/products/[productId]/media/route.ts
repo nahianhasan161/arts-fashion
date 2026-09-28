@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, handleAdminError } from "@/lib/admin/auth";
 import { getAdminSupabase } from "@/lib/admin/supabase";
-import { uploadMediaFile, BUCKET, publicBaseUrl } from "@/lib/media/upload";
+import { uploadMediaFile, removeMediaObjects, publicUrlFor } from "@/lib/media/upload";
 import type { ProductImage } from "@/types";
 
 /**
@@ -40,22 +40,18 @@ function mediaErrorResponse(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: map[message] ?? 400 });
 }
 
-/** Rows from the table plus the public URL the trigger would build. */
-function toImage(row: Record<string, unknown>, baseUrl: string): ProductImage {
+/** Rows from the table plus the public URL for the stored object. */
+function toImage(row: Record<string, unknown>): ProductImage {
   const path = String(row.storage_path ?? "");
   return {
     id: String(row.id),
     product_id: String(row.product_id),
     storage_path: path,
-    url: baseUrl ? `${baseUrl}/${BUCKET}/${path}` : path,
+    url: publicUrlFor(path),
     alt_text: (row.alt_text as string | null) ?? null,
     sort_order: Number(row.sort_order ?? 0),
     is_primary: Boolean(row.is_primary),
   };
-}
-
-function publicBase(): string {
-  return publicBaseUrl();
 }
 
 export async function GET(_request: NextRequest, { params }: Params) {
@@ -84,8 +80,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const base = publicBase();
-    return NextResponse.json({ data: (data ?? []).map((r) => toImage(r, base)) });
+    return NextResponse.json({ data: (data ?? []).map((r) => toImage(r)) });
   } catch (error) {
     return handleAdminError(error);
   }
@@ -169,7 +164,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       if (recordError) {
         // The file exists but has no row, so it would never be listed or
         // ever deleted. Remove it before reporting the failure.
-        await supabase.storage.from(BUCKET).remove([asset.storage_path]);
+        await removeMediaObjects(supabase, [asset.storage_path]);
         failed.push({ name: asset.file_name, reason: recordError.message });
         continue;
       }
@@ -197,7 +192,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         id: String(imageId),
         product_id: productId,
         storage_path: asset.storage_path,
-        url: `${publicBase()}/${BUCKET}/${asset.storage_path}`,
+        url: publicUrlFor(asset.storage_path),
         alt_text: altText || null,
         sort_order: uploaded.length,
         is_primary: makePrimary && uploaded.length === 0,
@@ -214,9 +209,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
 
-    const base = publicBase();
     return NextResponse.json({
-      data: (rows ?? []).map((r) => toImage(r, base)),
+      data: (rows ?? []).map((r) => toImage(r)),
       uploaded: uploaded.length,
       failed,
     });
@@ -284,8 +278,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const base = publicBase();
-    return NextResponse.json({ data: (data ?? []).map((r) => toImage(r, base)) });
+    return NextResponse.json({ data: (data ?? []).map((r) => toImage(r)) });
   } catch (error) {
     return handleAdminError(error);
   }
@@ -346,8 +339,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     // it instead of pretending the whole delete failed.
     let storageError: string | null = null;
     if (paths.length > 0) {
-      const { error } = await supabase.storage.from(BUCKET).remove(paths);
-      if (error) storageError = error.message;
+      storageError = await removeMediaObjects(supabase, paths);
     }
 
     return NextResponse.json({

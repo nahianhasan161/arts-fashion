@@ -10,6 +10,7 @@ import {
   type SizeRegion,
   type SizeRegionCode,
 } from "@/types";
+import { flattenCategoryTree } from "@/lib/utils";
 
 interface MeasurementRow {
   key: string;
@@ -63,9 +64,7 @@ export default function AdminSizes() {
 
       if (catRes.ok) {
         const catJson = await catRes.json();
-        const flatten = (nodes: Category[]): Category[] =>
-          nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
-        setCategories(flatten(catJson.data ?? []));
+        setCategories(flattenCategoryTree(catJson.data ?? []));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sizes");
