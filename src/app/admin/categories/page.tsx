@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Edit, Trash2, X, ChevronDown, ChevronRight } from "lucide-react";
 import { slugify } from "@/lib/utils";
 import type { Category } from "@/types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ApiResponse<T> {
   data: T[];
@@ -161,11 +162,28 @@ export default function AdminCategories() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={4} className="text-center py-8">
-                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  </td>
-                </tr>
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border-light last:border-b-0">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="w-4 h-4" />
+                        <Skeleton className="h-4 w-32" />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-40" />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Skeleton className="h-4 w-8 mx-auto" />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Skeleton className="h-7 w-7 rounded" />
+                        <Skeleton className="h-7 w-7 rounded" />
+                      </div>
+                    </td>
+                  </tr>
+                ))
               ) : categories.length === 0 ? (
                 <tr>
                   <td

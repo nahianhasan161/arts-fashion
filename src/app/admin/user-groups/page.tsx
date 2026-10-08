@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { GroupMember, UserGroupDetail, UserGroupWithCount } from "@/types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface FormState {
   id: string | null;
@@ -255,7 +256,27 @@ export default function AdminUserGroups() {
       )}
 
       {loading ? (
-        <div className="text-center py-12 text-text-muted text-xs">Loading groups...</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-surface-card border border-border-light rounded-xl p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+                <Skeleton className="h-5 w-14 rounded-full" />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-3/4" />
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <Skeleton className="h-6 w-20 rounded-full" />
+                <Skeleton className="h-6 w-16 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : groups.length === 0 ? (
         <div className="text-center py-12 text-text-muted text-xs">
           No user groups yet. Create one to target coupons at a segment.

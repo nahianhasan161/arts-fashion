@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Plus, Edit, Trash2, X, Palette, Search, Sparkles } from "lucide-react";
 import type { ColorPalette, Category } from "@/types";
 import { flattenCategoryTree } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ApiResponse<T> {
   data: T[];
@@ -188,8 +189,18 @@ export default function AdminColors() {
 
       {/* Loading state */}
       {loading && (
-        <div className="text-center py-12">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <div className="space-y-6">
+          <div>
+            <Skeleton className="h-4 w-28 mb-3" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="flex flex-col items-center gap-2 p-3">
+                  <Skeleton className="w-12 h-12 rounded-full" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

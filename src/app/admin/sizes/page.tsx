@@ -11,6 +11,7 @@ import {
   type SizeRegionCode,
 } from "@/types";
 import { flattenCategoryTree } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface MeasurementRow {
   key: string;
@@ -162,8 +163,26 @@ export default function AdminSizes() {
       )}
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+        <div className="space-y-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-surface-card border border-border-light rounded-xl p-4">
+              <div className="flex items-center gap-4">
+                <Skeleton className="w-14 h-14 rounded-lg" />
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-20" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {Array.from({ length: 4 }).map((_, j) => (
+                  <div key={j} className="p-2 space-y-1">
+                    <Skeleton className="h-3 w-12" />
+                    <Skeleton className="h-4 w-10" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       ) : visible.length === 0 ? (
         <div className="text-center py-12 text-text-muted">

@@ -1,5 +1,6 @@
 "use client";
 import { badgeClass } from "@/lib/badges";
+import { roundPercent, formatTaka } from "@/lib/pricing";
 
 import React, { useState, useEffect } from "react";
 import Image from "next/image";
@@ -50,12 +51,22 @@ export default function ProductDetailPage() {
   const liveBadges = useLiveBadges(product ? [product.id] : []);
   const live = product ? liveBadges[product.id] : undefined;
   const displayPrice = live?.final_price ?? product?.price ?? 0;
-  const displayPercent = live?.discount_percent ?? product?.discount_percent ?? 0;
+  // Rounded for display, like every other percentage on the storefront.
+  // `discount_value` is stored to two decimals, so a 14.8% markdown reaches
+  // this page as 14.8 -- and showing it raw would print "14.8% Off" here while
+  // the badge beside it said "15% OFF", which is the same discount rendered two
+  // ways on one screen.
+  const displayPercent = roundPercent(live?.discount_percent ?? product?.discount_percent ?? 0);
 
   // A badge is a label, and a label has two possible sources: the promotion
   // that is live now, or the product's own badge. The promotion wins while it
   // runs, and the product's own badge returns when it ends, so a badge never
   // outlives the promotion that produced it.
+  //
+  // products.badge is now server-derived from the discount, so the fallback
+  // chain below cannot contradict the price. The `badge_type !== "discount"`
+  // arm is kept for rows whose badge predates the derivation: a hand-set
+  // "NEW" on an existing product is still the better badge than none.
   const badgeType = live?.badge_type ?? product?.badge_type ?? null;
   const liveBadgeLabel =
     live?.badge_label ??
@@ -305,16 +316,21 @@ export default function ProductDetailPage() {
               <div className="bg-surface-subtle p-space-base rounded-xl border border-border-light flex flex-col gap-2">
                 <div className="flex items-baseline gap-3">
                   <span className="font-display text-2xl sm:text-3xl font-bold text-primary">
-                    ৳ {displayPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    {formatTaka(displayPrice)}
                   </span>
                   {crossedOutPrice > displayPrice && (
                     <span className="text-sm text-text-muted line-through">
-                      ৳ {crossedOutPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                      {formatTaka(crossedOutPrice)}
                     </span>
                   )}
                   {displayPercent > 0 && (
                     <span className="bg-badge-discount/10 text-badge-discount font-bold text-xs px-2.5 py-1 rounded">
-                      Save ৳ {(crossedOutPrice - displayPrice).toFixed(0)} ({displayPercent}% Off)
+                      {/* The amount saved goes through the same rounding as the
+                          percentage, and to the paisa rather than to the taka.
+                          toFixed(0) used to turn a 104.50 saving into "Save
+                          105", which is a claim about money that is not
+                          accurate on the page that is about to take the order. */}
+                      Save {formatTaka(crossedOutPrice - displayPrice)} ({displayPercent}% off)
                     </span>
                   )}
                   {live?.promotion_name && (

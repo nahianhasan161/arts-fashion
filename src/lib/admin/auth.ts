@@ -9,6 +9,7 @@ export interface AdminContext {
     email?: string;
   };
   profile: Profile | null;
+  isSuperAdmin: boolean;
 }
 
 export class AdminAuthError extends Error {
@@ -44,7 +45,10 @@ export async function requireAdmin(): Promise<AdminContext> {
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    throw new AdminAuthError(401, "Authentication required");
+    throw new AdminAuthError(
+      401,
+      "Not signed in. Sign in through the app first: this endpoint reads the session cookie, not an Authorization header."
+    );
   }
 
   const { data: profile, error: profileError } = await supabase
@@ -54,17 +58,39 @@ export async function requireAdmin(): Promise<AdminContext> {
     .single();
 
   if (profileError || !profile) {
-    throw new AdminAuthError(403, "Profile not found");
+    throw new AdminAuthError(
+      403,
+      "Your account is signed in but has no profile row, so it cannot be checked for admin access. An administrator needs to create one."
+    );
   }
 
-  if (profile.role !== "admin") {
-    throw new AdminAuthError(403, "Admin access required");
+  const isSuperAdmin = profile.role === "super_admin";
+
+  if (profile.role !== "admin" && profile.role !== "super_admin") {
+    throw new AdminAuthError(
+      403,
+      `Signed in as ${profile.email ?? user.email ?? user.id}, whose role is "${profile.role}" rather than "admin" or "super_admin". An administrator can change it from the User Management page.`
+    );
   }
 
   return {
     user: { id: user.id, email: user.email },
     profile: profile as Profile,
+    isSuperAdmin,
   };
+}
+
+export async function requireSuperAdmin(): Promise<AdminContext> {
+  const context = await requireAdmin();
+
+  if (!context.isSuperAdmin) {
+    throw new AdminAuthError(
+      403,
+      `Signed in as ${context.profile?.email ?? context.user.email ?? context.user.id}, whose role is "${context.profile?.role}" rather than "super_admin". Only a Super Admin can perform this action.`
+    );
+  }
+
+  return context;
 }
 
 export function handleAdminError(error: unknown): NextResponse {

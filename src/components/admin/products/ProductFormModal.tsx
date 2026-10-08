@@ -39,22 +39,26 @@ import {
 import {
   PRODUCT_GENDERS,
   PRODUCT_GENDER_LABELS,
+  isProductDiscountMode,
   isProductGender,
   type Category,
   type ColorOption,
   type Product,
+  type ProductDiscountMode,
   type ProductGender,
   type ProductStatus,
   type Promotion,
   type SizeOption,
 } from "@/types";
-
-const badgeTypeOptions: { value: string; label: string }[] = [
-  { value: "discount", label: "Discount" },
-  { value: "new", label: "New" },
-  { value: "festive", label: "Festive" },
-  { value: "popular", label: "Popular" },
-];
+import {
+  DISCOUNT_MODES,
+  DISCOUNT_MODE_LABELS,
+  deriveDiscount,
+  formatTaka,
+  normalizeDiscount,
+  salePrice,
+} from "@/lib/pricing";
+import { badgeClass } from "@/lib/badges";
 
 const statusOptions: { value: ProductStatus; label: string }[] = [
   { value: "draft", label: "Draft" },
@@ -65,23 +69,20 @@ const statusOptions: { value: ProductStatus; label: string }[] = [
 type DiscountType = "percentage" | "flat";
 
 /**
- * The sale price the server will store, mirrored here for display only.
- *
- * This duplicates calculate_sale_price so the admin can see the result of the
- * discount while typing it. It is never sent: the server derives the same
- * figure from regular_price and the discount, and a client-computed price in a
- * payload is precisely what the server-authoritative design exists to
- * prevent. If the two ever disagree, the server's value is the one that counts
- * and this is the number that was wrong.
+ * How the discount fields are arranged, per mode. `usesRegular` is the one that
+ * matters: every mode needs a base price, but only the two that express a
+ * markdown in the product itself (comparison, custom) take the base price as
+ * their own input, while "none" and "promotion" only show it as the reference
+ * the saving is measured against.
  */
-function previewSalePrice(regular: number, type: DiscountType, value: number): number {
-  if (!(regular > 0) || !(value > 0)) return regular;
-  const sale = type === "percentage" ? regular - (regular * value) / 100 : regular - value;
-  // A flat discount larger than the price is refused by the server, so the
-  // preview is clamped to keep the number on screen from ever showing a
-  // negative price the save would reject anyway.
-  return Math.max(0, sale);
-}
+const MODE_HELP: Record<ProductDiscountMode, string> = {
+  none: "The product is sold at its price, with no discount.",
+  comparison:
+    "Enter the price it used to be and the price it is now. The saving is worked out for you.",
+  custom: "Take an amount or a percentage off the price by hand.",
+  promotion:
+    "The linked promotion decides the price while its dates are live, and supplies the badge. Switch to another mode to discount this product directly.",
+};
 
 /** Slug rules mirror the column's: lower case, digits, and single dashes. */
 function slugify(value: string): string {
@@ -136,12 +137,23 @@ interface FormState {
   description: string;
   /** Pre-discount price. Sends regular_price. */
   regular_price: number;
+  /**
+   * How the admin chose to express the discount. Sent as `discount_mode` so the
+   * form reopens on the model that was used, rather than guessing from the
+   * stored numbers and showing a promotion-driven markdown as a manual one.
+   */
+  discount_mode: ProductDiscountMode;
   discount_type: DiscountType;
   /** Sends discount_value. A percentage, or a flat amount off. */
   discount_value: number;
+  /**
+   * The "new price" of price-comparison mode. Sends `comparison_price`, and is
+   * NOT stored: the server turns it into a percentage and re-derives the sale
+   * price from that, so the price the admin typed can never disagree with the
+   * badge describing it.
+   */
+  comparison_price: number;
   stock: number;
-  badge: string;
-  badge_type: string;
   is_featured: boolean;
   status: ProductStatus;
   /**
@@ -171,6 +183,7 @@ type Action =
   | { type: "toggleColor"; id: string }
   | { type: "toggleSize"; id: string }
   | { type: "matrix"; value: MatrixState }
+  | { type: "setDiscountMode"; mode: ProductDiscountMode }
   | { type: "togglePromotion"; id: string }
   | { type: "specKey"; index: number; value: string }
   | { type: "specValue"; index: number; value: string }
@@ -185,11 +198,11 @@ function blankState(): FormState {
     subCategoryId: "",
     description: "",
     regular_price: 0,
+    discount_mode: "none",
     discount_type: "percentage",
     discount_value: 0,
+    comparison_price: 0,
     stock: 0,
-    badge: "",
-    badge_type: "",
     is_featured: false,
     status: "draft",
     gender: null,
@@ -318,6 +331,55 @@ function reducer(state: FormState, action: Action): FormState {
 
     case "matrix":
       return { ...state, matrix: action.value };
+
+    case "setDiscountMode": {
+      // Switching mode must CONVERT, not discard.
+      //
+      // The alternative -- clearing the other mode's fields -- makes the mode
+      // selector a trap: an admin who types 20% by hand, clicks "Price
+      // comparison" to see the same thing as a before/after pair, and clicks
+      // back has silently lost their 20%. So the discount currently in force is
+      // converted into whatever the new mode needs, in both directions:
+      //
+      //   - the new price of comparison mode is seeded with the sale price the
+      //     current mode produces, so the comparison opens on the markdown
+      //     already in effect;
+      //   - custom mode is seeded with the markdown of the mode being left,
+      //     translated into the custom type, so a 150-off price arrives as
+      //     "150 off" rather than as "0%".
+      //
+      // Leaving custom or comparison for none or promotion zeroes the
+      // markdown, which is the point of those modes: a promotion discount must
+      // not stack under a leftover product markdown.
+      const current = normalizeDiscount({
+        mode: state.discount_mode,
+        regular: state.regular_price,
+        discountType: state.discount_type,
+        discountValue: state.discount_value,
+        comparisonPrice: state.comparison_price,
+      });
+      const currentSale = salePrice(current.regular, current.type, current.value);
+
+      // Percentage first: a flat markdown converted straight to a percentage
+      // would round-trip badly (150 off 1,000 is 15%, which is fine, but 150
+      // off 700 is 21.43% and comes back as 149.99 off). Converting a flat
+      // markdown to its own type keeps it exact.
+      const wasPercentage = current.type === "percentage" && current.value > 0;
+
+      return {
+        ...state,
+        discount_mode: action.mode,
+        // A product with no price yet has no sale price to seed from, so the new
+        // price starts on the base price rather than on 0 -- an empty
+        // comparison reading "100% off" is a worse first impression than one
+        // reading "no change yet".
+        comparison_price: currentSale > 0 ? currentSale : state.regular_price,
+        discount_type: wasPercentage ? "percentage" : "flat",
+        discount_value: wasPercentage
+          ? current.value
+          : Math.max(0, Math.round((current.regular - currentSale) * 100) / 100),
+      };
+    }
 
     case "togglePromotion":
       return {
@@ -454,11 +516,26 @@ export function ProductFormModal({
       // output. Falling back to price would let a legacy 0-price row look
       // populated in the form and be re-saved as a free product.
       regular_price: Number(p.regular_price ?? 0),
+      // Rows written before discount_mode existed are read the way the
+      // migration backfilled them: a discount means 'custom', no discount with
+      // a promotion linked means 'promotion', otherwise 'none'. Guessing from
+      // the numbers rather than falling back to a fixed default is what lets an
+      // old product reopen on the model it was actually saved with.
+      discount_mode:
+        p.discount_mode && isProductDiscountMode(p.discount_mode)
+          ? p.discount_mode
+          : Number(p.discount_value ?? 0) > 0
+            ? "custom"
+            : (p.promotion_ids?.length ?? 0) > 0
+              ? "promotion"
+              : "none",
       discount_type: (p.discount_type ?? "percentage") as DiscountType,
       discount_value: Number(p.discount_value ?? 0),
+      // The new price of comparison mode is the stored sale price, so
+      // comparison mode round-trips a product saved through it instead of
+      // coming back with an empty second field.
+      comparison_price: Number(p.price ?? p.regular_price ?? 0),
       stock: Number(p.stock ?? 0),
-      badge: p.badge ?? "",
-      badge_type: p.badge_type ?? "",
       is_featured: p.is_featured ?? false,
       status: p.status ?? "draft",
       // Read through the type guard rather than cast: the column is
@@ -513,6 +590,78 @@ export function ProductFormModal({
     [state.matrix],
   );
 
+  // The discount, normalised once.
+  //
+  // The three authoring modes collapse to one (regular_price, discount_type,
+  // discount_value) triple, and everything below -- the price preview, the
+  // badge preview, the comparison readout, the payload -- reads this one value
+  // rather than each re-deriving the mode. That is what keeps the badge the
+  // admin sees in the form identical to the badge the storefront renders, and
+  // the price preview identical to the price that gets stored.
+  const discount = useMemo(
+    () =>
+      normalizeDiscount({
+        mode: state.discount_mode,
+        regular: state.regular_price,
+        discountType: state.discount_type,
+        discountValue: state.discount_value,
+        comparisonPrice: state.comparison_price,
+      }),
+    [
+      state.discount_mode,
+      state.regular_price,
+      state.discount_type,
+      state.discount_value,
+      state.comparison_price,
+    ],
+  );
+
+  const derived = useMemo(
+    () => deriveDiscount(state.regular_price, discount.type, discount.value),
+    [state.regular_price, discount.type, discount.value],
+  );
+
+  // The badge the storefront will show, in the wording it will use.
+  //
+  // In promotion mode the badge is the promotion's own: its label if it has
+  // one, otherwise its discount, styled with its own badge_type. Previewing the
+  // product's own "15% OFF" there instead would show the admin one badge and
+  // ship another, and the promotion's badge is the one that carries a seasonal
+  // or "popular" claim rather than a price one.
+  const badgePreview = useMemo(() => {
+    if (state.discount_mode === "promotion") {
+      const chosen = promotions.filter((p) => state.promotionIds.includes(p.id));
+      const promo = chosen[0];
+      if (!promo) return null;
+      const label =
+        promo.badge_label?.trim() ||
+        (promo.discount_type === "percentage"
+          ? `${Math.round(Number(promo.discount_value))}% OFF`
+          : `${Number(promo.discount_value)} OFF`);
+      return {
+        label,
+        type: promo.badge_type ?? "discount",
+        // What the promotion does to THIS product's price, which is the number
+        // an admin is actually deciding on.
+        sale: salePrice(
+          state.regular_price,
+          promo.discount_type as DiscountType,
+          Number(promo.discount_value),
+        ),
+        source: promo.name,
+      };
+    }
+    if (!derived.badgeLabel) return null;
+    return { label: derived.badgeLabel, type: "discount" as const, sale: derived.sale, source: null };
+  }, [
+    state.discount_mode,
+    state.promotionIds,
+    state.regular_price,
+    promotions,
+    derived.badgeLabel,
+    derived.sale,
+  ]);
+
   /**
    * The payload. Names for the category and sub-category are deliberately
    * absent: the server resolves them from the ids and a trigger keeps the two
@@ -550,10 +699,17 @@ export function ProductFormModal({
       sub_category_id: state.subCategoryId || null,
       description: state.description,
       regular_price: state.regular_price,
+      // The mode, the mode's own inputs, and nothing derived. The server
+      // normalises the four modes onto one (regular_price, discount_type,
+      // discount_value) triple and derives the sale price, the percentage and
+      // the badge from it, so this payload carries only what the admin chose.
+      discount_mode: state.discount_mode,
       discount_type: state.discount_type,
       discount_value: state.discount_value,
-      badge: state.badge || null,
-      badge_type: state.badge_type || null,
+      comparison_price: state.comparison_price,
+      // badge and badge_type are NOT sent. They are derived from the discount
+      // above, on every save, by the server -- which is what stops a badge from
+      // being able to contradict the price beside it.
       is_featured: state.is_featured,
       status: state.status,
       // Sent as JSON null, which the server's NULLIF turns into SQL NULL, so
@@ -602,16 +758,40 @@ export function ProductFormModal({
       setFormError("Enter a price greater than zero.");
       return;
     }
-    if (state.discount_value < 0) {
-      setFormError("A discount cannot be negative.");
-      return;
+    // The discount is validated through the same normalisation the payload is
+    // built with, so what is checked here is what will actually be stored. The
+    // old checks were written against discount_type/discount_value directly,
+    // which meant they silently did not apply in comparison mode -- the mode
+    // whose whole purpose is a new price, and the one most likely to be typed
+    // badly.
+    if (state.discount_mode === "comparison") {
+      if (state.comparison_price < 0) {
+        setFormError("The new price cannot be negative.");
+        return;
+      }
+      if (state.comparison_price > state.regular_price) {
+        setFormError(
+          "The new price is higher than the old price, which is a price rise rather than a discount. Use a custom discount of zero, or lower the old price.",
+        );
+        return;
+      }
     }
-    if (state.discount_type === "percentage" && state.discount_value > 100) {
-      setFormError("A percentage discount cannot be more than 100.");
-      return;
+    if (state.discount_mode === "custom") {
+      if (state.discount_value < 0) {
+        setFormError("A discount cannot be negative.");
+        return;
+      }
+      if (state.discount_type === "percentage" && state.discount_value > 100) {
+        setFormError("A percentage discount cannot be more than 100.");
+        return;
+      }
+      if (state.discount_type === "flat" && state.discount_value > state.regular_price) {
+        setFormError("A flat discount cannot be more than the price.");
+        return;
+      }
     }
-    if (state.discount_type === "flat" && state.discount_value > state.regular_price) {
-      setFormError("A flat discount cannot be more than the price.");
+    if (state.discount_mode === "promotion" && state.promotionIds.length === 0) {
+      setFormError("Choose a promotion, or switch to another discount mode.");
       return;
     }
     const unnamedSpec = state.specs.some((s) => !s.key.trim() && s.value.trim());
@@ -789,59 +969,28 @@ export function ProductFormModal({
               />
               {state.regular_price > 0 && (
                 <p className="mt-1 text-[11px] text-text-muted">
-                  Shoppers pay{" "}
-                  <span className="font-semibold text-on-surface">
-                    ৳{" "}
-                    {previewSalePrice(
-                      state.regular_price,
-                      state.discount_type,
-                      state.discount_value,
-                    ).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                  </span>
-                  {previewSalePrice(state.regular_price, state.discount_type, state.discount_value) <
-                  state.regular_price && (
+                  {state.discount_mode === "promotion" ? (
                     <>
-                      , reduced from{" "}
-                      <span className="line-through">
-                        ৳ {state.regular_price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                      Shoppers pay {formatTaka(derived.sale)}, or the promotion price while it runs —
+                      whichever is lower. The storefront price is worked out on the server.
+                    </>
+                  ) : (
+                    <>
+                      Shoppers pay{" "}
+                      <span className="font-semibold text-on-surface">
+                        {formatTaka(derived.sale)}
                       </span>
+                      {derived.hasDiscount && (
+                        <>
+                          , reduced from{" "}
+                          <span className="line-through">{formatTaka(state.regular_price)}</span>
+                        </>
+                      )}
+                      . The storefront price is worked out on the server.
                     </>
                   )}
-                  . The storefront price is worked out on the server.
                 </p>
               )}
-            </div>
-
-            <div>
-              <span className={labelClass}>Discount</span>
-              <div className="flex gap-2">
-                <div className="w-32">
-                  <select
-                    aria-label="Discount type"
-                    value={state.discount_type}
-                    onChange={(e) => set("discount_type", e.target.value as DiscountType)}
-                    className={fieldClass}
-                  >
-                    <option value="percentage">Percentage</option>
-                    <option value="flat">Flat amount</option>
-                  </select>
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  aria-label="Discount value"
-                  value={state.discount_value || ""}
-                  onChange={(e) => set("discount_value", parseFloat(e.target.value) || 0)}
-                  className={inputClass}
-                  placeholder="0"
-                />
-              </div>
-              <p className="mt-1 text-[11px] text-text-muted">
-                {state.discount_type === "percentage"
-                  ? "Taken off the price as a percentage."
-                  : "Taken off the price as an amount in taka."}
-              </p>
             </div>
 
             <Dropdown
@@ -910,32 +1059,304 @@ export function ProductFormModal({
               )}
             </div>
 
-            <div>
-              <label htmlFor="pf-badge" className={labelClass}>
-                Badge
-              </label>
-              <input
-                id="pf-badge"
-                type="text"
-                value={state.badge}
-                onChange={(e) => set("badge", e.target.value)}
-                className={inputClass}
-              />
+          </div>
+
+          {/*
+            The Discount module.
+
+            This replaces three separate fields -- a discount type and value, a
+            free-text Badge, and a Badge Type dropdown -- plus the standalone
+            Promotions picker. Those were four controls describing one thing, and
+            nothing connected them: the badge was typed by hand beside a price the
+            server had derived, so a product could be labelled SALE at full price
+            and a product 40% under could carry no badge at all, with no check
+            anywhere able to notice. Everything a shopper sees about the saving now
+            comes from the numbers below, and the badge is what those numbers say
+            rather than a second opinion about them.
+          */}
+          <div className="border border-border-light rounded-xl p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className={labelClass}>Discount</p>
+                <p className="text-[11px] text-text-muted">
+                  {MODE_HELP[state.discount_mode]}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Discount mode">
+                {DISCOUNT_MODES.map((m) => {
+                  const on = state.discount_mode === m;
+                  // Promotion is offered only when there is something to select.
+                  // An empty promotion list is not a reason to hide the mode --
+                  // it is a reason to say so inside it.
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => dispatch({ type: "setDiscountMode", mode: m })}
+                      className={`px-3 h-8 text-xs font-semibold rounded-lg border transition-colors ${
+                        on
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border-light text-text-muted hover:border-primary/40"
+                      }`}
+                    >
+                      {DISCOUNT_MODE_LABELS[m]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <Dropdown
-              id="pf-badgetype"
-              label="Badge Type"
-              value={state.badge_type}
-              onChange={(v) => set("badge_type", v)}
-            >
-              <option value="">None</option>
-              {badgeTypeOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </Dropdown>
+            {/* --- price comparison: two prices, saving derived --- */}
+            {state.discount_mode === "comparison" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="pf-old-price" className={labelClass}>
+                      Old price
+                    </label>
+                    <input
+                      id="pf-old-price"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={state.regular_price || ""}
+                      onChange={(e) => set("regular_price", parseFloat(e.target.value) || 0)}
+                      className={inputClass}
+                      placeholder="4500"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="pf-new-price" className={labelClass}>
+                      New price
+                    </label>
+                    <input
+                      id="pf-new-price"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={state.comparison_price || ""}
+                      onChange={(e) => set("comparison_price", parseFloat(e.target.value) || 0)}
+                      className={inputClass}
+                      placeholder="3500"
+                    />
+                  </div>
+                </div>
+                {/*
+                  The visual comparison. The struck-through old price beside the
+                  new one is what a shopper is shown on a product card, so it is
+                  shown here too -- an admin should be approving the same
+                  comparison the storefront will render, not a table of inputs.
+
+                  The saving is the DIFFERENCE and the percentage, rather than
+                  only the percentage: a percentage is the harder of the two to
+                  judge against a price, and 15% of 700 is not obviously 105.
+                */}
+                {state.regular_price > 0 && state.comparison_price > 0 && (
+                  <div className="flex flex-wrap items-center gap-3 bg-surface-subtle rounded-lg px-3 py-2.5">
+                    <span className="line-through text-text-muted">
+                      {formatTaka(state.regular_price)}
+                    </span>
+                    <span className="text-text-muted" aria-hidden>
+                      &rarr;
+                    </span>
+                    <span className="font-display text-base font-semibold text-primary">
+                      {formatTaka(state.comparison_price)}
+                    </span>
+                    {derived.hasDiscount && (
+                      <>
+                        <span className="text-[11px] text-text-muted">
+                          Save {formatTaka(state.regular_price - derived.sale)} ({derived.percent}% off)
+                        </span>
+                        {/*
+                          Two things can differ between what was typed and what
+                          will be stored, and the admin is told about both rather
+                          than discovering either on the storefront.
+
+                          The PRICE, when a two-decimal percentage cannot express
+                          the pair exactly: 349.99 off 400 is 12.5025%, stored as
+                          12.50%, and 12.50% of 400 is 350.00. The stored price is
+                          deliberately the one the percentage produces, because
+                          get_effective_prices() recomputes the price from the
+                          percentage at read time -- storing the typed figure
+                          instead would show one price on a product card and
+                          charge another at checkout. Every pair a shop actually
+                          uses (1000 to 850, 400 to 350) is exact; this only
+                          bites on an odd paisa.
+
+                          The PERCENTAGE, because the badge rounds to a whole
+                          number for display while the stored value keeps its
+                          two decimals.
+                        */}
+                        {derived.sale !== state.comparison_price && (
+                          <span className="text-[11px] font-semibold text-primary">
+                            Stores as {formatTaka(derived.sale)} — the nearest price a{" "}
+                            {discount.value}% discount gives.
+                          </span>
+                        )}
+                        {derived.percent !== discount.value && (
+                          <span className="text-[11px] text-text-muted">
+                            Stored as {discount.value}% and shown rounded to {derived.percent}%.
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {!derived.hasDiscount && state.comparison_price >= state.regular_price && (
+                      <span className="text-[11px] text-text-muted">
+                        The new price is not below the old one, so this is not a discount.
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* --- custom: manual amount or percentage --- */}
+            {state.discount_mode === "custom" && (
+              <div className="space-y-3">
+                <div className="flex gap-2 max-w-sm">
+                  <div className="w-40">
+                    <select
+                      aria-label="Discount type"
+                      value={state.discount_type}
+                      onChange={(e) => set("discount_type", e.target.value as DiscountType)}
+                      className={fieldClass}
+                    >
+                      <option value="percentage">Percentage off</option>
+                      <option value="flat">Amount off (৳)</option>
+                    </select>
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    aria-label="Discount value"
+                    value={state.discount_value || ""}
+                    onChange={(e) => set("discount_value", parseFloat(e.target.value) || 0)}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </div>
+                {/*
+                  A flat amount stores no percentage, so one is worked out from
+                  the two prices. It is shown because "150 off" and "21% off" are
+                  the same markdown and an admin choosing between them needs to
+                  see that they are.
+                */}
+                {derived.hasDiscount && (
+                  <div className="flex flex-wrap items-center gap-3 bg-surface-subtle rounded-lg px-3 py-2.5">
+                    <span className="line-through text-text-muted">
+                      {formatTaka(state.regular_price)}
+                    </span>
+                    <span className="text-text-muted" aria-hidden>
+                      &rarr;
+                    </span>
+                    <span className="font-display text-base font-semibold text-primary">
+                      {formatTaka(derived.sale)}
+                    </span>
+                    <span className="text-[11px] text-text-muted">
+                      Save {formatTaka(state.regular_price - derived.sale)} ({derived.percent}% off)
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* --- promotion: the discount comes from Promotions --- */}
+            {state.discount_mode === "promotion" && (
+              <div>
+                <p className={labelClass} id="pf-promotions">
+                  Promotions
+                </p>
+                {promotionsLoading ? (
+                  <div className={inputClass + " bg-surface-subtle animate-pulse"} aria-hidden />
+                ) : promotions.length === 0 ? (
+                  <p className="text-[11px] text-text-muted">
+                    No promotions exist yet. Create one under{" "}
+                    <a href="/admin/promotions" className="text-primary font-medium">
+                      Promotions
+                    </a>
+                    , or switch to a custom discount to price this product directly.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby="pf-promotions">
+                    {promotions.map((promo) => {
+                      const on = state.promotionIds.includes(promo.id);
+                      const live =
+                        promo.status === "active" &&
+                        new Date(promo.starts_at) <= new Date() &&
+                        new Date(promo.ends_at) > new Date();
+                      return (
+                        <button
+                          type="button"
+                          key={promo.id}
+                          aria-pressed={on}
+                          onClick={() => dispatch({ type: "togglePromotion", id: promo.id })}
+                          className={`${chipClass} ${
+                            on
+                              ? "border-primary bg-primary/10 text-primary font-semibold"
+                              : "text-text-muted hover:border-primary/40"
+                          }`}
+                        >
+                          {promo.name}
+                          <span className="text-[10px] opacity-70">
+                            {promo.discount_type === "percentage"
+                              ? `${Math.round(Number(promo.discount_value))}%`
+                              : `৳${Number(promo.discount_value)}`}
+                          </span>
+                          {/* A linked but not-yet-live promotion is the normal
+                              state for a scheduled campaign, so it is labelled
+                              rather than hidden -- an admin who cannot tell a
+                              scheduled promotion from a broken one cannot use
+                              the feature. */}
+                          {!live && (
+                            <span className="text-[10px] opacity-60">scheduled</span>
+                          )}
+                          {on && <Check className="w-3 h-3" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="mt-1 text-[11px] text-text-muted">
+                  The promotion applies while its dates are live, and supplies the badge. A
+                  promotion that would raise the price is ignored, and a coupon is applied on top of
+                  the lower of the two.
+                </p>
+              </div>
+            )}
+
+            {/* --- the generated badge --- */}
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border-light">
+              <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                Badge
+              </span>
+              {badgePreview ? (
+                <>
+                  {/* Rendered with the real badge styling, not described in
+                      words: badgeClass is what the storefront calls, so the
+                      colour here is the colour there. */}
+                  <span
+                    className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${badgeClass(badgePreview.type)}`}
+                  >
+                    {badgePreview.label}
+                  </span>
+                  <span className="text-[11px] text-text-muted">
+                    Generated from the discount
+                    {badgePreview.source ? ` by the “${badgePreview.source}” promotion` : ""}. It
+                    cannot be typed over, so it cannot contradict the price.
+                  </span>
+                </>
+              ) : (
+                <span className="text-[11px] text-text-muted">
+                  No badge. One is generated as soon as there is a discount
+                  {state.discount_mode === "promotion" && state.promotionIds.length === 0
+                    ? " and a promotion is chosen"
+                    : ""}
+                  .
+                </span>
+              )}
+            </div>
           </div>
 
           <div>
@@ -1059,54 +1480,6 @@ export function ProductFormModal({
               onChange={(matrix) => dispatch({ type: "matrix", value: matrix })}
               disabled={submitting}
             />
-          </div>
-
-          <div>
-            <label htmlFor="pf-promotions" className={labelClass}>
-              Promotions
-            </label>
-            {promotionsLoading ? (
-              <div className={inputClass + " bg-surface-subtle animate-pulse"} aria-hidden />
-            ) : promotions.length === 0 ? (
-              <p className="text-[11px] text-text-muted">
-                No promotions exist yet. Create them under{" "}
-                <a href="/admin/promotions" className="text-primary font-medium">
-                  Promotions
-                </a>
-                .
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby="pf-promotions">
-                {promotions.map((promo) => {
-                  const on = state.promotionIds.includes(promo.id);
-                  return (
-                    <button
-                      type="button"
-                      key={promo.id}
-                      aria-pressed={on}
-                      onClick={() => dispatch({ type: "togglePromotion", id: promo.id })}
-                      className={`${chipClass} ${
-                        on
-                          ? "border-primary bg-primary/10 text-primary font-semibold"
-                          : "text-text-muted hover:border-primary/40"
-                      }`}
-                    >
-                      {promo.name}
-                      <span className="text-[10px] opacity-70">
-                        {promo.discount_type === "percentage"
-                          ? `${promo.discount_value}%`
-                          : `৳${promo.discount_value}`}
-                      </span>
-                      {on && <Check className="w-3 h-3" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <p className="mt-1 text-[11px] text-text-muted">
-              A promotion is applied to this product when its dates are live. A promotion that would
-              raise the price is ignored, and a coupon is applied on top of the lower of the two.
-            </p>
           </div>
 
           <div>

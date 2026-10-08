@@ -5,6 +5,7 @@ import { Footer } from "@/components/layout/Footer";
 import { CartDrawer } from "@/components/cart/CartDrawer";
 import { WishlistDrawer } from "@/components/wishlist/WishlistDrawer";
 import { AuthProvider } from "@/components/auth/AuthProvider";
+import { ClientProviders } from "@/components/ClientProviders";
 
 const fontSans = "font-sans";
 
@@ -26,13 +27,15 @@ export default function RootLayout({
     <html lang="en" className={fontSans}>
       <body className="bg-surface font-body text-on-surface antialiased min-h-screen flex flex-col">
         <AuthProvider>
-          <Header />
-          <CartDrawer />
-          <WishlistDrawer />
-          <main className="flex-1 pt-[120px] lg:pt-[164px]">
-            {children}
-          </main>
-          <Footer />
+          <ClientProviders>
+            <Header />
+            <CartDrawer />
+            <WishlistDrawer />
+            <main className="flex-1 pt-[120px] lg:pt-[164px]">
+              {children}
+            </main>
+            <Footer />
+          </ClientProviders>
         </AuthProvider>
       </body>
     </html>

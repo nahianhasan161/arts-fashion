@@ -12,7 +12,11 @@
  * A new type needs one line here and nothing else.
  */
 
-export type BadgeType = "discount" | "new" | "festive" | "popular";
+// The union lives with the other domain types and is re-exported here, because
+// everything that draws a badge already imports from this file and the type
+// should not need a second import path.
+export type { BadgeType } from "@/types";
+import type { BadgeType } from "@/types";
 
 /** The four values accepted by products.badge_type and promotions.badge_type. */
 export const BADGE_TYPES: readonly BadgeType[] = ["discount", "new", "festive", "popular"];

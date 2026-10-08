@@ -8,6 +8,7 @@ import type {
   PromotionDiscountType,
   PromotionStatus,
 } from "@/types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ApiResponse<T> {
   data: T[];
@@ -165,8 +166,22 @@ export default function AdminPromotions() {
       )}
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-surface-card border border-border-light rounded-xl p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-3/4" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : visible.length === 0 ? (
         <div className="text-center py-12 text-text-muted">

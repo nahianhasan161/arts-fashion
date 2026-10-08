@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { ProductFormModal } from "@/components/admin/products/ProductFormModal";
 import { flattenCategoryTree } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   PRODUCT_GENDERS,
   PRODUCT_GENDER_LABELS,
@@ -608,11 +609,44 @@ export default function AdminProducts() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-12">
-                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  </td>
-                </tr>
+                Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border-light last:border-b-0">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Skeleton className="w-10 h-10 rounded-lg" />
+                        <div className="space-y-1.5">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-3 w-20" />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-16" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Skeleton className="h-4 w-16 ml-auto" />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Skeleton className="h-6 w-14 rounded-full mx-auto" />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Skeleton className="h-5 w-16 rounded-full mx-auto" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-20" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Skeleton className="h-7 w-7 rounded" />
+                        <Skeleton className="h-7 w-7 rounded" />
+                        <Skeleton className="h-7 w-7 rounded" />
+                      </div>
+                    </td>
+                  </tr>
+                ))
               ) : products.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-12">

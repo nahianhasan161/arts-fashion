@@ -1,0 +1,88 @@
+-- Hard-delete a user completely (auth.users + auth.identities + public.profiles).
+--
+-- Why an RPC instead of supabase.auth.admin.deleteUser()?
+-- --------------------------------------------------------
+-- The GoTrue admin API requires the service_role key. The server client in
+-- this app is built from the publishable key only (NEXT_PUBLIC_SUPABASE_*),
+-- and no service_role key exists in the environment. Any call to
+-- auth.admin.deleteUser() from the app runtime returns:
+--
+--     HTTP 500 {"error":"This endpoint requires a valid Bearer token"}
+--
+-- This is the same error class that was already fixed for the GET user-list
+-- endpoint (migration 20260929130000_profile_email_sync.sql), which stopped
+-- calling auth.admin.listUsers() and instead reads profiles.email directly.
+--
+-- A SECURITY DEFINER function runs with the privileges of its owner (postgres),
+-- which already has DELETE on auth.users. It bypasses the need for the
+-- service_role key, and it lets the route stay free of a privileged credential.
+--
+-- The function enforces the same boundary as the API:
+--   * caller must be admin or super_admin (via public.is_admin())
+--   * target must exist
+--   * super_admin rows cannot be deleted (P0002)
+--
+-- Cascade from auth.users to auth.identities and public.profiles is handled
+-- by the FKs (profiles_id_fkey, identities_user_id_fkey), both ON DELETE CASCADE.
+--
+-- Orphaned profile handling
+-- -------------------------
+-- A profile row can survive a previous deletion attempt if the cascade was
+-- ever broken (e.g. the prevent_super_admin_tampering trigger returned NULL
+-- for DELETE, which cancelled the cascade). In that state the auth user and
+-- identities are gone but the profile remains. The old version of this
+-- function raised P0005 in that case because DELETE FROM auth.users returned
+-- NOT FOUND.
+--
+-- The fix: if the profile exists but the auth user does not, the user is
+-- already effectively deleted. Clean up the orphaned profile row and return
+-- success rather than failing.
+CREATE OR REPLACE FUNCTION public.admin_delete_user(p_user_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE
+    v_target_role TEXT;
+    v_auth_exists BOOLEAN;
+BEGIN
+    IF NOT public.is_admin() THEN
+        RAISE EXCEPTION 'not_authorized' USING ERRCODE = '42501';
+    END IF;
+
+    IF p_user_id IS NULL OR btrim(p_user_id) = '' THEN
+        RAISE EXCEPTION 'user_id_required' USING ERRCODE = '22023';
+    END IF;
+
+    SELECT role INTO v_target_role
+    FROM public.profiles
+    WHERE id = p_user_id::uuid;
+
+    IF v_target_role IS NULL THEN
+        RAISE EXCEPTION 'user_not_found' USING ERRCODE = 'P0005';
+    END IF;
+
+    IF v_target_role = 'super_admin' THEN
+        RAISE EXCEPTION 'cannot_delete_super_admin' USING ERRCODE = 'P0002';
+    END IF;
+
+    -- Check whether the auth user still exists. If it does, delete it and let
+    -- the FKs cascade to auth.identities and public.profiles.
+    SELECT EXISTS(SELECT 1 FROM auth.users WHERE id = p_user_id::uuid)
+        INTO v_auth_exists;
+
+    IF v_auth_exists THEN
+        DELETE FROM auth.users WHERE id = p_user_id::uuid;
+    ELSE
+        -- Auth user already gone. The profile row may be an orphan left over
+        -- from a previous broken cascade. Remove it so the deletion is complete.
+        DELETE FROM public.profiles WHERE id = p_user_id::uuid;
+    END IF;
+
+    RETURN jsonb_build_object('id', p_user_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_delete_user(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_delete_user(TEXT) TO authenticated;

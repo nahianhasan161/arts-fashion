@@ -1,4 +1,20 @@
-export type UserRole = "admin" | "user";
+export type UserRole = "user" | "admin" | "super_admin";
+
+export type UserStatus = "active" | "banned" | "deleted";
+
+/**
+ * Visual style of a badge.
+ *
+ * Canonical here rather than in lib/badges so the domain unions live together;
+ * badges.ts re-exports it for the display layer.
+ *
+ * A product's own badge is always `discount`, because it is derived from the
+ * discount the product actually has. The other three are claims that are not
+ * about price -- a seasonal, a "new arrival", a "popular" signal -- and a
+ * promotion is the only surface that can make them, since a promotion is
+ * something with dates and an owner behind it.
+ */
+export type BadgeType = "discount" | "new" | "festive" | "popular";
 
 export interface Profile {
   id: string;
@@ -8,7 +24,22 @@ export interface Profile {
   city: string | null;
   avatar_url: string | null;
   role: UserRole;
+  status: UserStatus;
+  banned_at: string | null;
+  deleted_at: string | null;
   updated_at: string;
+  /**
+   * A COPY of auth.users.email, maintained by the `on_auth_user_email_changed`
+   * trigger. It was absent from this type even though the column has existed
+   * since the table was created, and the omission is not cosmetic: with no
+   * `email` to read, the admin user list had to call `auth.admin.listUsers()` to
+   * recover addresses, and that call needs a service_role key and failed on
+   * every request.
+   *
+   * auth.users remains the source of truth. This is a copy, so it can only be
+   * as fresh as its trigger.
+   */
+  email: string | null;
 }
 
 export interface ProductColor {
@@ -105,13 +136,29 @@ export interface Product {
   discount_type?: PromotionDiscountType;
   discount_value?: number;
   discount_percent: number;
+  /**
+   * How the admin expressed the discount when it was last saved. Recorded so
+   * the form reopens on the model that was used rather than guessing from the
+   * stored numbers; it changes no price. Absent on rows written before it
+   * existed, which the form reads as "custom" when there is a discount and
+   * "none" when there is not.
+   */
+  discount_mode?: ProductDiscountMode;
   images: string[];
   colors: ProductColor[];
   sizes: ProductSize[];
   stock: number;
   rating: number;
   reviews_count: number;
+  /**
+   * Server-derived badge text, e.g. "15% OFF". Deprecated as an authoring
+   * field: it used to be typed by hand, which let it disagree with the price
+   * beside it -- a product at its full price could carry "SALE" and one 40%
+   * under could carry nothing. It is now written from the discount on every
+   * save and read only as a fallback for rows with no live badge.
+   */
   badge?: string;
+  /** Derived alongside `badge`; `'discount'` when a discount exists, else null. */
   badge_type?: "discount" | "new" | "festive" | "popular";
   is_featured?: boolean;
   specs?: Record<string, string>;
@@ -186,6 +233,24 @@ export const PRODUCT_GENDER_LABELS: Record<ProductGender, string> = {
 
 export function isProductGender(value: unknown): value is ProductGender {
   return value === "men" || value === "women" || value === "kids";
+}
+
+/**
+ * How an admin chose to express a product's discount.
+ *
+ * Three ways of saying the same thing -- a pair of prices to compare, a manual
+ * amount or percentage, or an existing promotion -- plus the absence of one.
+ * The mode is a record of the authoring, not a different kind of discount: all
+ * four normalise to the same stored (regular_price, discount_type,
+ * discount_value) triple, which is why the storefront has one pricing path
+ * rather than three.
+ */
+export type ProductDiscountMode = "none" | "comparison" | "custom" | "promotion";
+
+export function isProductDiscountMode(value: unknown): value is ProductDiscountMode {
+  return (
+    value === "none" || value === "comparison" || value === "custom" || value === "promotion"
+  );
 }
 
 export interface CartItem {
@@ -310,6 +375,15 @@ export interface Promotion {
   ends_at: string;
   status: PromotionStatus;
   badge_label: string | null;
+  /**
+   * Visual style of this promotion's badge. This is where festive / new /
+   * popular now live: a product's own badge is always the discount it actually
+   * has, so a badge that is not a discount has to come from a promotion, which
+   * is also the only thing that can honestly claim to be a seasonal or
+   * "popular" signal. Absent on rows written before the column existed, which
+   * the display layers read as a discount badge.
+   */
+  badge_type?: BadgeType | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -366,8 +440,86 @@ export interface Order {
   shipping_fee: number;
   total_amount: number;
   payment_method: "cod" | "bkash" | "nagad";
-  status: "pending" | "processing" | "shipped" | "delivered";
+  status: "pending" | "processing" | "shipped" | "delivered" | "cancelled" | "returned";
   items: CartItem[];
+  created_at: string;
+}
+
+// ==========================================================
+// Payments — Separate from Orders
+// An order can have MULTIPLE payment transactions (charge, refund,
+// chargeback). Each row is one atomic transaction.
+// ==========================================================
+
+export type PaymentType = "charge" | "refund" | "chargeback";
+export type PaymentStatus =
+  | "initiated"
+  | "successful"
+  | "failed"
+  | "cancelled"
+  | "refunded";
+export type PaymentProvider = "cod" | "bkash" | "nagad" | "stripe" | "paypal";
+
+export interface Payment {
+  id: string;
+  order_id: string;
+  user_id: string | null;
+  type: PaymentType;
+  provider: PaymentProvider;
+  provider_txn_id: string | null;
+  amount: number;
+  status: PaymentStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+// ==========================================================
+// Returns — Order-level return + item-level detail
+// ==========================================================
+
+export type ReturnStatus =
+  | "requested"
+  | "approved"
+  | "received"
+  | "completed"
+  | "rejected";
+
+export interface Return {
+  id: string;
+  order_id: string;
+  user_id: string | null;
+  reason: string | null;
+  status: ReturnStatus;
+  refund_amount: number;
+  refund_payment_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReturnItem {
+  id: string;
+  return_id: string;
+  order_item_id: string;
+  quantity: number;
+  condition_at_return: string | null;
+  created_at: string;
+}
+
+// ==========================================================
+// Payment Webhooks — Audit trail for future MFS gateway
+// ==========================================================
+
+export interface PaymentWebhook {
+  id: string;
+  provider: string;
+  event_type: string;
+  provider_event_id: string | null;
+  payload: Record<string, unknown>;
+  processed: boolean;
+  processed_at: string | null;
+  error: string | null;
   created_at: string;
 }
 

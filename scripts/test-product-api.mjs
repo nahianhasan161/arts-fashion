@@ -1097,6 +1097,229 @@ try {
   check("and reaches the whole catalogue, not this suite's rows",
     (byCategory.body?.pagination?.total ?? 0) > 4, true);
 
+  // ---------------------------------------------------------------- 22
+  section(22, "three discount models, one stored markdown");
+  // Every money assertion below wraps its value in Number(). The SQL API returns
+  // NUMERIC as text ("850.00") while the RPC's JSON result returns it as a
+  // number (850), so an unwrapped comparison fails for a reason that has nothing
+  // to do with the discount logic being tested.
+  // The form used to offer a discount AND a free-text badge AND a badge type,
+  // describing the same fact three times over, with nothing connecting them. A
+  // full-price product could be labelled SALE. These assert the replacement:
+  // three ways to express a markdown, all normalising onto one
+  // (regular_price, discount_type, discount_value) triple, with the badge
+  // derived from that triple rather than typed beside it.
+
+  const saveWith = (over) => api("POST", "/api/admin/products", baseProduct(over));
+
+  // --- model 1: price comparison
+  const cmp = await saveWith({
+    slug: `route-${TAG}-cmp`, discount_mode: "comparison",
+    regular_price: 1000, comparison_price: 850,
+  });
+  check("a price comparison saves", cmp.status, 200);
+  const cmpId = cmp.body?.data?.id;
+  if (cmpId) created.products.push(cmpId);
+  const cmpRow = await col1(`SELECT * FROM public.products WHERE id=${Q(cmpId)}`);
+  check("the new price becomes the sale price", Number(cmpRow.price), 850);
+  check("and the old price is kept as the base", Number(cmpRow.original_price), 1000);
+  check("the markdown is the percentage between them", Number(cmpRow.discount_value), 15);
+  check("stored as a percentage, since that is the stored shape", cmpRow.discount_type, "percentage");
+  check("the mode is recorded", cmpRow.discount_mode, "comparison");
+  check("the percentage is 15", cmpRow.discount_percent, 15);
+  check("and the badge is generated from it", cmpRow.badge, "15% OFF");
+  check("with the discount badge type", cmpRow.badge_type, "discount");
+  // The return value carries what was stored, so a client never has to trust
+  // its own arithmetic for the number it is about to display.
+  check("the response echoes the stored sale price", cmp.body?.data?.sale_price, 850);
+  check("and the stored badge", cmp.body?.data?.badge, "15% OFF");
+
+  // The rounding requirement, on a price pair that does not divide evenly.
+  // 349.99 off 400 is 12.5025%, which is stored as 12.50 (discount_value is
+  // NUMERIC(10,2), so a third decimal would be truncated and the stored number
+  // would stop describing the pair of prices that produced it) and displayed as
+  // 13%. A badge reading "12.5% OFF" would be neither accurate to the paisa nor
+  // readable.
+  const oddPair = await saveWith({
+    slug: `route-${TAG}-cmpodd`, discount_mode: "comparison",
+    regular_price: 400, comparison_price: 349.99,
+  });
+  check("an uneven pair saves", oddPair.status, 200);
+  if (oddPair.body?.data?.id) created.products.push(oddPair.body.data.id);
+  const oddPairRow = await col1(`SELECT * FROM public.products WHERE id=${Q(oddPair.body?.data?.id)}`);
+  check("the percentage is stored to two decimals", Number(oddPairRow.discount_value), 12.5);
+  check("the badge rounds it to a whole number", oddPairRow.badge, "13% OFF");
+  check("and so does the percentage column", oddPairRow.discount_percent, 13);
+
+  // The sale price comes back as 350.00, not the 349.99 that was typed, and that
+  // is the model working rather than failing.
+  //
+  // A percentage discount is stored to two decimals, so 349.99 off 400 is
+  // 12.5025% -> 12.50%, and 12.50% of 400 is exactly 350.00. The alternative --
+  // storing the typed price and letting the percentage describe it -- was
+  // rejected deliberately: get_effective_prices() recomputes the sale price from
+  // regular_price and the discount, so a stored price the recomputation does not
+  // reproduce would show one number on a product card and charge another at
+  // checkout. A paisa of adjustment is visible and explainable; a display that
+  // disagrees with the charge is neither.
+  check("the sale price is what the stored percentage yields", Number(oddPairRow.price), 350);
+  // A pair that a two-decimal percentage CAN express is stored exactly, which is
+  // the case that matters: 1000 -> 850 above stored 850.00, not 849.99 or
+  // 850.01.
+  check("a percentage-exact pair is stored exactly", Number(cmpRow.price), 850);
+
+  // A "new price" at or above the old one is not a discount. Reported as one it
+  // would be a negative markdown, which the column CHECK refuses, so the save
+  // would fail with a constraint error instead of accepting "no discount".
+  const priceRise = await saveWith({
+    slug: `route-${TAG}-cmprise`, discount_mode: "comparison",
+    regular_price: 500, comparison_price: 600,
+  });
+  check("a new price above the old one saves", priceRise.status, 200);
+  if (priceRise.body?.data?.id) created.products.push(priceRise.body.data.id);
+  const priceRiseRow = await col1(`SELECT * FROM public.products WHERE id=${Q(priceRise.body?.data?.id)}`);
+  check("with no markdown", Number(priceRiseRow.discount_value), 0);
+  check("no badge", priceRiseRow.badge, null);
+  check("and the full price as the sale price", Number(priceRiseRow.price), 500);
+
+  // --- model 2: custom discount, both kinds
+  const pct = await saveWith({
+    slug: `route-${TAG}-pct`, discount_mode: "custom",
+    regular_price: 1000, discount_type: "percentage", discount_value: 14.8,
+  });
+  check("a custom percentage saves", pct.status, 200);
+  if (pct.body?.data?.id) created.products.push(pct.body.data.id);
+  const pctRow = await col1(`SELECT * FROM public.products WHERE id=${Q(pct.body?.data?.id)}`);
+  check("14.8% is stored as entered", Number(pctRow.discount_value), 14.8);
+  check("but the badge says 15%", pctRow.badge, "15% OFF");
+  check("and the percentage column agrees", pctRow.discount_percent, 15);
+
+  const flatMd = await saveWith({
+    slug: `route-${TAG}-flat`, discount_mode: "custom",
+    regular_price: 700, discount_type: "flat", discount_value: 150,
+  });
+  check("a flat amount saves", flat.status, 200);
+  if (flatMd.body?.data?.id) created.products.push(flat.body.data.id);
+  const flatMdRow = await col1(`SELECT * FROM public.products WHERE id=${Q(flatMd.body?.data?.id)}`);
+  check("the amount is taken off the price", Number(flatMdRow.price), 550);
+  check("the badge names the amount, not a percentage", flatMdRow.badge, "150 OFF");
+  // This was 0: discount_percent was only filled in for percentage markdowns, so
+  // the detail page claimed a flat saving was worth no percentage at all.
+  check("the percentage it represents is derived from the prices", flatMdRow.discount_percent, 21);
+  check("rounded to a whole number", flatMdRow.discount_percent, 21);
+
+  // --- model 3: promotion integration
+  // The product's own markdown is cleared, because a product discount left over
+  // from a previous mode would stack under the promotion's and the shopper would
+  // pay less than either advertised saving.
+  const stacked = await saveWith({
+    slug: `route-${TAG}-stack`, discount_mode: "custom",
+    regular_price: 1000, discount_type: "percentage", discount_value: 30,
+  });
+  const stackedId = stacked.body?.data?.id;
+  if (stackedId) created.products.push(stackedId);
+  check("a product can start with a 30% markdown", stacked.body?.data?.badge, "30% OFF");
+  const switched = await api("PUT", "/api/admin/products", {
+    ...baseProduct({
+      slug: `route-${TAG}-stack`, discount_mode: "promotion",
+      regular_price: 1000, promotion_ids: [promo],
+    }),
+    id: stackedId,
+  });
+  check("switching it to a promotion saves", switched.status, 200);
+  const switchedRow = await col1(`SELECT * FROM public.products WHERE id=${Q(stackedId)}`);
+  check("the leftover markdown is cleared", Number(switchedRow.discount_value), 0);
+  check("and the product's own badge with it", switchedRow.badge, null);
+  check("the mode is promotion", switchedRow.discount_mode, "promotion");
+  check("and the link exists", (await col1(
+    `SELECT count(*)::int c FROM public.promotion_products WHERE product_id=${Q(stackedId)} AND promotion_id=${Q(promo)}`)).c, 1);
+
+  // The promotion supplies the badge, live, at read time. It is a read-time
+  // decision because the promotion's dates decide whether it applies -- storing
+  // it on the product would have made a dated campaign permanent the moment it
+  // was linked.
+  const liveBadge = (await col1(
+    `SELECT * FROM public.get_effective_badges(ARRAY[${Q(stackedId)}::text])`));
+  check("the live promotion supplies the badge label", liveBadge.badge_label, "10% OFF");
+  check("and the promotion's own badge type", liveBadge.badge_type, "discount");
+  check("with its percentage", liveBadge.discount_percent, 10);
+  check("and its price as the final one", Number(liveBadge.final_price), 900);
+  check("while the product's own markdown stays clear", Number(switchedRow.price), 1000);
+
+  // A promotion with its own label supplies that label, not the raw discount.
+  await must(`UPDATE public.promotions SET badge_label='Eid Special', badge_type='festive' WHERE id=${Q(promo)}`);
+  const labelled = (await col1(
+    `SELECT * FROM public.get_effective_badges(ARRAY[${Q(stackedId)}::text])`));
+  check("a promotion's own label wins", labelled.badge_label, "Eid Special");
+  check("and its own badge type, for the colour", labelled.badge_type, "festive");
+  await must(`UPDATE public.promotions SET badge_label='Winter 20%', badge_type=NULL WHERE id=${Q(promo)}`);
+
+  // --- the badge cannot be authored
+  //
+  // The old form sent a free-text badge next to a price the server had derived,
+  // which is how a full-price product ended up labelled SALE. The payload key is
+  // now dropped by the route and ignored by the function.
+  const spoof = await saveWith({
+    slug: `route-${TAG}-spoof`, discount_mode: "none",
+    regular_price: 500, badge: "SALE", badge_type: "popular",
+  });
+  check("a payload carrying a badge still saves", spoof.status, 200);
+  if (spoof.body?.data?.id) created.products.push(spoof.body.data.id);
+  const spoofRow = await col1(`SELECT * FROM public.products WHERE id=${Q(spoof.body?.data?.id)}`);
+  check("but the badge is not stored", spoofRow.badge, null);
+  check("and neither is the badge type", spoofRow.badge_type, null);
+  check("a full-price product cannot be labelled SALE", Number(spoofRow.price), 500);
+
+  // A discount the payload disagrees about is still the one that gets a badge.
+  const disagree = await saveWith({
+    slug: `route-${TAG}-disagree`, discount_mode: "comparison",
+    regular_price: 800, comparison_price: 700, badge: "80% OFF",
+  });
+  if (disagree.body?.data?.id) created.products.push(disagree.body.data.id);
+  const disagreeRow = await col1(`SELECT * FROM public.products WHERE id=${Q(disagree.body?.data?.id)}`);
+  check("a claimed badge is replaced by the real one", disagreeRow.badge, "13% OFF");
+
+  // --- the mode round-trips, so the form reopens on the model that was used
+  // Selected by id rather than by taking the first row. The search is a
+  // substring match, so "route-<tag>-cmp" also matches "route-<tag>-cmpodd", and
+  // the list is ordered newest first -- which made this assert against the wrong
+  // product until it was pinned to an id.
+  const cmpList = await api("GET", `/api/admin/products?search=route-${TAG}-cmp&limit=10`);
+  const cmpListed = (cmpList.body?.data ?? []).find((x) => x.id === cmpId);
+  check("the list returns the mode", cmpListed?.discount_mode, "comparison");
+  check("and the derived badge", cmpListed?.badge, "15% OFF");
+  // The form seeds comparison mode's new price from the stored sale price, so a
+  // product saved through comparison comes back with both fields populated and
+  // the second field is not blank.
+  check("with a sale price to seed the comparison from", Number(cmpListed?.price), 850);
+
+  // --- an unknown mode is refused rather than filed under a default
+  const badMode = await saveWith({ slug: `route-${TAG}-badmode`, discount_mode: "clearance" });
+  check("an unknown discount mode is refused", badMode.status, 400);
+  check("with the named code", badMode.body?.code, "invalid_discount_mode");
+
+  // --- a markdown with no promotion still gets a badge
+  //
+  // get_effective_badges returned a row ONLY for products with a live promotion
+  // (WHERE e.promotion_id IS NOT NULL), so a product with a markdown and no
+  // promotion returned nothing and the card fell through to the hand-typed
+  // column. That is the defect that made deprecating the hand-typed column
+  // unsafe: doing it without this fix would have silently removed the badge from
+  // every discounted product.
+  const flatBadge = (await col1(
+    `SELECT * FROM public.get_effective_badges(ARRAY[${Q(flatMd.body?.data?.id)}::text])`));
+  check("a markdown with no promotion has a badge", flatBadge.badge_label, "150 OFF");
+  check("typed as a discount", flatBadge.badge_type, "discount");
+  const noBadge = (await col1(
+    `SELECT * FROM public.get_effective_badges(ARRAY[${Q(spoof.body?.data?.id)}::text])`));
+  check("a product with no discount has no badge", noBadge.badge_label, null);
+  check("and no badge type", noBadge.badge_type, null);
+  // Every product gets a row now, which is what lets a consumer distinguish
+  // "no badge" from "this product was not considered".
+  check("every product has a row", (await col1(
+    `SELECT count(*)::int c FROM public.get_effective_badges(ARRAY(SELECT id FROM public.products))`)).c,
+    (await col1(`SELECT count(*)::int c FROM public.products`)).c);
+
   console.log(fails === 0 ? "\nALL PRODUCT API CHECKS PASS" : `\n${fails} FAILED`);
 } catch (err) {
   console.error("\nTHREW:", err instanceof Error ? err.message : err);

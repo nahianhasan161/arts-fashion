@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Search, Package, ChevronDown, ChevronRight } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface OrderItem {
   id: string;
@@ -212,11 +213,31 @@ export default function AdminOrders() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-12">
-                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  </td>
-                </tr>
+                Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i} className="border-b border-border-light last:border-b-0">
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-28" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-32" />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Skeleton className="h-4 w-20 ml-auto" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-5 w-20 rounded-full" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-24" />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <Skeleton className="h-4 w-8 mx-auto" />
+                    </td>
+                  </tr>
+                ))
               ) : orders.length === 0 ? (
                 <tr>
                   <td

@@ -424,6 +424,22 @@ async function save(request: NextRequest) {
       delete payload[derived];
     }
 
+    // badge and badge_type are derived now too, and this is where that decision
+    // is enforced rather than merely intended.
+    //
+    // They used to be free text typed into the form next to the price, which
+    // meant a product at its full price could be labelled "SALE" and a product
+    // 40% under could carry no badge at all -- and no check anywhere compared
+    // the two, because the badge was not connected to the discount. The server
+    // now writes both from the discount on every save, so a badge in the
+    // payload is a claim about the product that the price has not been asked
+    // about. Dropping it here as well as in the function means a client cannot
+    // reintroduce the field by posting one, and the function stays correct for
+    // any caller rather than only this route.
+    for (const derivedBadge of ["badge", "badge_type"]) {
+      delete payload[derivedBadge];
+    }
+
     // published_at and deleted_at belong to the database, not the form.
     // published_at is written once by the products_set_published_at trigger on
     // the transition into 'published', and deleted_at by

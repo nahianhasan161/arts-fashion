@@ -27,6 +27,11 @@ const STATUS_BY_ERROR: Record<string, number> = {
   invalid_discount: 400,
   invalid_percentage_discount: 400,
   invalid_flat_discount: 400,
+  // The discount model the payload asked for is not one of the four, and a
+  // comparison whose new price is negative. Both are named so the form can say
+  // which of them happened rather than showing "invalid discount".
+  invalid_discount_mode: 400,
+  invalid_sale_price: 400,
   invalid_status: 400,
   invalid_gender: 400,
   invalid_cost_price: 400,
@@ -73,6 +78,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_discount: "Enter a discount of zero or more.",
   invalid_percentage_discount: "A percentage discount cannot exceed 100.",
   invalid_flat_discount: "A flat discount cannot exceed the regular price.",
+  invalid_discount_mode:
+    "That discount type is not one of the four available. Reload the form and pick the discount again.",
+  invalid_sale_price: "The new price cannot be negative.",
   invalid_status: "Choose a status of draft, published, or archived.",
   invalid_gender: "Choose an audience of Men, Women, or Kids.",
   invalid_cost_price: "Enter a cost of zero or more, or leave the field blank.",

@@ -1,5 +1,6 @@
 "use client";
 import { badgeClass } from "@/lib/badges";
+import { formatTaka } from "@/lib/pricing";
 
 import React from "react";
 import Image from "next/image";
@@ -39,9 +40,22 @@ export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardPr
     toggleWishlist(product);
   };
 
+  // A live promotion speaks for the product while it runs; otherwise the
+  // product's own badge, which the server derives from the product's discount
+  // on every save. The fallback chain is safe to read now for a reason it was
+  // not before: both ends of it come from the same numbers as the price, so a
+  // card cannot show a badge its own price contradicts.
   const badgeText = live?.badge_label ?? product.badge;
   const badgeType = live?.badge_type ?? product.badge_type;
   const displayPrice = live?.final_price ?? product.price;
+
+  // The base the saving was taken from. live.base_price is the server's figure
+  // when a promotion is running; product.original_price is the product's
+  // standing markdown base. Using original_price unconditionally made the two
+  // disagree whenever a promotion applied on top of a product that already had
+  // a markdown -- the struck-through price was not the price the saving came
+  // from.
+  const basePrice = live?.base_price ?? product.original_price;
 
   // One shared mapping, so the card and the product page cannot give the same
   // badge two different colours.
@@ -128,11 +142,11 @@ export function ProductCard({ product, aspectRatio = "portrait" }: ProductCardPr
         {/* Pricing */}
         <div className="flex items-baseline gap-2 pt-1">
           <span className="font-display font-bold text-sm sm:text-base text-primary">
-            ৳ {displayPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            {formatTaka(displayPrice)}
           </span>
-          {displayPrice < product.original_price && (
+          {displayPrice < basePrice && (
             <span className="text-xs text-text-muted line-through">
-              ৳ {product.original_price.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              {formatTaka(basePrice)}
             </span>
           )}
         </div>
